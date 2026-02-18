@@ -49,6 +49,7 @@ export interface Lead {
   source?: string; // e.g. Meta Ads, Google Ads
   value?: number; // Potential Deal Value
   dateAdded?: string;
+  googleResourceName?: string; // ID for Google Contacts sync
 }
 
 export interface Employee {

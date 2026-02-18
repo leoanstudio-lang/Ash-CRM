@@ -78,9 +78,59 @@ export const saveContactToGoogle = async (accessToken: string, contact: {
             throw new Error(errorData.error.message || 'Failed to save contact');
         }
 
-        return await response.json();
+        const data = await response.json();
+        return data.resourceName; // Return the resource ID (e.g., people/12345)
     } catch (error) {
         console.error('Error saving to Google Contacts:', error);
+        throw error;
+    }
+};
+
+export const updateGoogleContact = async (accessToken: string, resourceName: string, contact: {
+    firstName: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    company?: string;
+    jobTitle?: string;
+}) => {
+    try {
+        // 1. Fetch current contact to get Etag (required for update)
+        const getResponse = await fetch(`https://people.googleapis.com/v1/${resourceName}?personFields=metadata`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+
+        if (!getResponse.ok) throw new Error('Failed to fetch contact for update');
+        const currentContact = await getResponse.json();
+        const etag = currentContact.etag;
+
+        // 2. Prepare Update Body
+        const body = {
+            etag,
+            names: [{ givenName: contact.firstName, familyName: contact.lastName || '' }],
+            emailAddresses: contact.email ? [{ value: contact.email, type: 'work' }] : [],
+            phoneNumbers: contact.phone ? [{ value: contact.phone, type: 'mobile' }] : [],
+            organizations: contact.company ? [{ name: contact.company, title: contact.jobTitle || '' }] : []
+        };
+
+        // 3. Perform Update
+        const updateResponse = await fetch(`https://people.googleapis.com/v1/${resourceName}:updateContact?updatePersonFields=names,emailAddresses,phoneNumbers,organizations`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+
+        if (!updateResponse.ok) {
+            const errorData = await updateResponse.json();
+            throw new Error(errorData.error.message || 'Failed to update contact');
+        }
+
+        return await updateResponse.json();
+    } catch (error) {
+        console.error('Error updating Google Contact:', error);
         throw error;
     }
 };
