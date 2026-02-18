@@ -134,3 +134,25 @@ export const updateGoogleContact = async (accessToken: string, resourceName: str
         throw error;
     }
 };
+
+export const searchContactByPhone = async (accessToken: string, phoneNumber: string) => {
+    try {
+        // Search for the contact using the phone number
+        const query = encodeURIComponent(phoneNumber);
+        const searchResponse = await fetch(`https://people.googleapis.com/v1/people:searchContacts?query=${query}&readMask=names,phoneNumbers,metadata`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+
+        if (!searchResponse.ok) throw new Error('Failed to search contact');
+
+        const searchResult = await searchResponse.json();
+        if (searchResult.results && searchResult.results.length > 0) {
+            // Return the first match's resourceName
+            return searchResult.results[0].person.resourceName;
+        }
+        return null;
+    } catch (error) {
+        console.error('Error searching Google Contact:', error);
+        return null;
+    }
+};

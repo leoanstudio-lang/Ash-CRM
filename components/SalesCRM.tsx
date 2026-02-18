@@ -125,17 +125,35 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
       await updateLeadInDB(editingLead.id, leadForm);
 
       // Update in Google Contacts if enabled
-      if (googleToken && editingLead.googleResourceName) {
-        import('../lib/googleContacts').then(async ({ updateGoogleContact }) => {
+      if (googleToken) {
+        import('../lib/googleContacts').then(async ({ updateGoogleContact, searchContactByPhone }) => {
           try {
-            await updateGoogleContact(googleToken, editingLead.googleResourceName!, {
-              firstName: leadForm.name!,
-              email: leadForm.email,
-              phone: leadForm.mobile,
-              company: leadForm.projectName,
-              jobTitle: 'Prospect'
-            });
-            console.log('Updated Google Contact');
+            let resourceName = editingLead.googleResourceName;
+
+            // Fallback: If no ID, search by phone
+            if (!resourceName && leadForm.mobile) {
+              console.log('Searching Google Contact by phone:', leadForm.mobile);
+              resourceName = await searchContactByPhone(googleToken, leadForm.mobile);
+
+              // If found, save the ID to DB for future
+              if (resourceName) {
+                console.log('Found Google Contact:', resourceName);
+                await updateLeadInDB(editingLead.id, { googleResourceName: resourceName });
+              }
+            }
+
+            if (resourceName) {
+              await updateGoogleContact(googleToken, resourceName, {
+                firstName: leadForm.name!,
+                email: leadForm.email,
+                phone: leadForm.mobile,
+                company: leadForm.projectName,
+                jobTitle: 'Prospect'
+              });
+              console.log('Updated Google Contact');
+            } else {
+              console.log('No matching Google Contact found to update.');
+            }
           } catch (error) {
             console.error('Failed to update Google Contact', error);
           }
