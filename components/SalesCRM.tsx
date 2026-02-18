@@ -54,11 +54,50 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
     localStorage.setItem('sales_filter_today', filterToday.toString());
   }, [searchTerm, filterToday]);
 
+  // Google Contacts Integration
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [pendingLead, setPendingLead] = useState<any | null>(null);
+
+  useEffect(() => {
+    // Initialize Google Client
+    import('../lib/googleContacts').then(({ initGoogleClient }) => {
+      initGoogleClient((token) => {
+        setGoogleToken(token);
+      });
+    });
+  }, []);
+
+  // Watch for token update to process pending lead
+  useEffect(() => {
+    if (googleToken && pendingLead) {
+      syncToGoogle(googleToken, pendingLead);
+      setPendingLead(null);
+    }
+  }, [googleToken, pendingLead]);
+
+  const syncToGoogle = (token: string, lead: any) => {
+    import('../lib/googleContacts').then(async ({ saveContactToGoogle }) => {
+      try {
+        await saveContactToGoogle(token, {
+          firstName: lead.name,
+          email: lead.email,
+          phone: lead.mobile,
+          company: lead.projectName,
+          jobTitle: 'Prospect'
+        });
+        console.log('Synced to Google Contacts');
+        // Toast or visual feedback could go here
+      } catch (error) {
+        console.error('Failed to sync to Google Contacts', error);
+        alert('Lead saved to CRM, but failed to sync to Google Contacts.');
+      }
+    });
+  };
+
   const handleSaveLead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingLead) {
       const updated = { ...editingLead, ...leadForm } as Lead;
-      // Check for status change to Closed
       if (updated.status === 'Closed' && editingLead.status !== 'Closed') {
         await convertToClient(updated);
       }
@@ -78,11 +117,22 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
       };
 
       if (leadToAdd.status === 'Closed') {
-        const tempLead = { ...leadToAdd, id: `TEMP_${Date.now()}` }; // ID needed for conversion logic? No, convertToClient uses fields.
+        const tempLead = { ...leadToAdd, id: `TEMP_${Date.now()}` };
         await convertToClient(tempLead);
       }
 
       await addLeadToDB(leadToAdd);
+
+      // Automatic Google Sync
+      if (googleToken) {
+        syncToGoogle(googleToken, leadToAdd);
+      } else {
+        // Token missing? Trigger auth and queue this lead
+        setPendingLead(leadToAdd);
+        import('../lib/googleContacts').then(({ requestGoogleToken }) => {
+          requestGoogleToken();
+        });
+      }
     }
 
     setShowAddModal(false);
@@ -234,6 +284,7 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
               <SlidersHorizontal size={16} />
               Filters
             </button>
+
             <button
               onClick={() => { resetForm(); setEditingLead(null); setShowAddModal(true); }}
               className="bg-indigo-600 text-white px-6 py-3 rounded-[1.5rem] flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20 font-black uppercase tracking-widest text-[10px] active:scale-95 whitespace-nowrap flex-shrink-0"
