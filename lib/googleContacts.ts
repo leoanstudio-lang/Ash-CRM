@@ -156,3 +156,22 @@ export const searchContactByPhone = async (accessToken: string, phoneNumber: str
         return null;
     }
 };
+
+export const deleteGoogleContact = async (accessToken: string, resourceName: string) => {
+    try {
+        const response = await fetch(`https://people.googleapis.com/v1/${resourceName}:deleteContact`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error.message || 'Failed to delete contact');
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error deleting Google Contact:', error);
+        throw error; // Rethrow to let caller know
+    }
+};

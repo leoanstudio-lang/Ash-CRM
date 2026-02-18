@@ -5,9 +5,9 @@ import {
   Search, Plus, Calendar, Mail, Phone, Clock,
   AlertCircle, TrendingUp, CheckCircle2, UserPlus,
   Edit3, History, MessageSquare, ArrowRight, Filter,
-  ChevronDown, SlidersHorizontal, DollarSign, X
+  ChevronDown, SlidersHorizontal, DollarSign, X, Trash2, Eye
 } from 'lucide-react';
-import { addLeadToDB, updateLeadInDB, addClientToDB } from '../lib/db';
+import { addLeadToDB, updateLeadInDB, deleteLeadFromDB, addClientToDB } from '../lib/db';
 
 interface SalesCRMProps {
   leads: Lead[];
@@ -33,6 +33,8 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
   const [filterValueMax, setFilterValueMax] = useState('');
   const [filterDateStart, setFilterDateStart] = useState('');
   const [filterDateEnd, setFilterDateEnd] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Cold' | 'Warm' | 'Hot' | 'Lead Today' | 'Lost'>('All');
+  const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
 
   const [leadForm, setLeadForm] = useState<Partial<Lead>>({
     name: '',
@@ -89,6 +91,25 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
       setPendingLead(null);
     }
   }, [googleToken, pendingLead]);
+
+  const confirmDelete = async () => {
+    if (leadToDelete) {
+      await deleteLeadFromDB(leadToDelete.id);
+
+      // Delete from Google Contacts if linked and token available
+      if (googleToken && leadToDelete.googleResourceName) {
+        import('../lib/googleContacts').then(async ({ deleteGoogleContact }) => {
+          try {
+            await deleteGoogleContact(googleToken, leadToDelete.googleResourceName!);
+            console.log('Deleted from Google Contacts');
+          } catch (error) {
+            console.error('Failed to delete from Google Contacts', error);
+          }
+        });
+      }
+      setLeadToDelete(null);
+    }
+  };
 
   const syncToGoogle = (token: string, lead: any, dbLeadId?: string) => {
     import('../lib/googleContacts').then(async ({ saveContactToGoogle }) => {
@@ -527,13 +548,37 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button
-                      onClick={() => openUpdate(lead)}
-                      className="p-2 bg-white text-slate-400 hover:bg-indigo-600 hover:text-white rounded-xl transition-all shadow-sm border border-slate-100 group-hover:scale-110 group-active:scale-95 inline-flex items-center gap-2"
-                    >
-                      <Edit3 size={14} />
-                      <span className="text-[9px] font-black uppercase tracking-widest hidden lg:block">Log</span>
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingLead(lead);
+                          setLeadForm(lead);
+                          // Don't show modal yet? actually the logic below implies "Operations" column has "LOG"
+                          // But the code below is "Operations"
+                          // This block is actually the "Operations" cell. 
+                          // Wait, looking at the code structure...
+                          // Line 440 is inside the map.
+                          // Let's verify the context.
+                          // This replacement chunk is targeting the button. 
+                          // I'll add the Trash button next to it.
+                          setShowUpdateModal(true);
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-all group shadow-sm"
+                      >
+                        <Eye size={14} className="text-slate-400 group-hover:text-blue-600 transition-colors" />
+                        <span className="text-[10px] font-black text-slate-500 group-hover:text-slate-700 uppercase tracking-widest">Log</span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLeadToDelete(lead);
+                        }}
+                        className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-red-50 hover:border-red-200 text-slate-300 hover:text-red-500 transition-all shadow-sm"
+                        title="Delete Lead"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -705,6 +750,38 @@ const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {leadToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 border border-slate-100 transform transition-all scale-100">
+            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 mx-auto">
+              <Trash2 className="text-red-500" size={24} />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 text-center mb-2">Delete Prospect?</h3>
+            <p className="text-center text-slate-500 text-xs font-medium mb-6 leading-relaxed">
+              Are you sure you want to permanently delete this lead? This action cannot be undone.
+              {leadToDelete.googleResourceName && (
+                <span className="block mt-2 text-rose-600 font-bold">This will also delete the contact from Google Contacts!</span>
+              )}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setLeadToDelete(null)}
+                className="flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-red-500 text-white shadow-lg shadow-red-500/30 hover:bg-red-600 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
