@@ -1,0 +1,7 @@
+{
+  "name": "Yender CRM Pro",
+  "description": "A comprehensive CRM platform for managing clients, leads, projects (development & graphics), and financial 'Thanda' analysis, featuring project allocation and automated notifications.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
