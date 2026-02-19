@@ -25,10 +25,12 @@ const ClientDB: React.FC<ClientDBProps> = ({ clients }) => {
     status: 'Active'
   });
 
-  const filteredClients = clients.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.companyName.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredClients = clients
+    .filter(c =>
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.companyName.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => (b.dateAdded || '').localeCompare(a.dateAdded || ''));
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
