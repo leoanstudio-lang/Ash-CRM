@@ -11,28 +11,82 @@ interface GoogleTokenResponse {
 
 let tokenClient: any;
 
+// ─── Token Persistence Helpers ───────────────────────────────────────────────
+const TOKEN_KEY = 'gcrm_google_token';
+const TOKEN_EXPIRY_KEY = 'gcrm_google_token_expiry';
+
+const storeToken = (token: string, expiresIn: number) => {
+    // Subtract 60 seconds as a safety buffer before actual expiry
+    const expiryTime = Date.now() + (expiresIn - 60) * 1000;
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
+};
+
+export const getStoredToken = (): string | null => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const expiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+    if (!token || !expiry) return null;
+    if (Date.now() > parseInt(expiry, 10)) {
+        // Token expired — clear it
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(TOKEN_EXPIRY_KEY);
+        return null;
+    }
+    return token;
+};
+
+const clearStoredToken = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_EXPIRY_KEY);
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const initGoogleClient = (onTokenReceived: (token: string) => void) => {
     if (typeof window === 'undefined' || !(window as any).google) {
         console.error('Google Identity Services script not loaded');
         return;
     }
 
+    // ── Step 1: Return cached token immediately if still valid ──
+    const cached = getStoredToken();
+    if (cached) {
+        onTokenReceived(cached);
+        // Still initialise the client for future silent refresh
+    }
+
+    // ── Step 2: Init the token client ──
     tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: SCOPES,
         callback: (response: GoogleTokenResponse) => {
             if (response.error) {
-                console.error('Google Auth Error:', response);
+                // Silent auth failed — that's fine, we only show popup on demand
+                if (response.error !== 'interaction_required' && response.error !== 'access_denied') {
+                    console.error('Google Auth Error:', response);
+                }
+                clearStoredToken();
                 return;
             }
+            // Save the new token to localStorage so future loads skip the popup
+            storeToken(response.access_token, response.expires_in || 3599);
             onTokenReceived(response.access_token);
         },
     });
+
+    // ── Step 3: If no cached token, try a silent auth (no popup) ──
+    if (!cached) {
+        try {
+            tokenClient.requestAccessToken({ prompt: '' });
+        } catch {
+            // Silent attempt failed silently — user will be prompted on first lead save
+        }
+    }
 };
 
 export const requestGoogleToken = () => {
     if (tokenClient) {
-        tokenClient.requestAccessToken();
+        // Explicit request — show the popup
+        tokenClient.requestAccessToken({ prompt: 'consent' });
     } else {
         console.error('Google Client not initialized');
     }
