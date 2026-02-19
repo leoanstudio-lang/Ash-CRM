@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Project, Employee, Client, Service, Priority, Package, PackageLineItem, PaymentMilestone, PaymentAlert } from '../types';
-import { Plus, User, Clock, CheckCircle, Search, Calendar, DollarSign, Filter, ChevronDown, Wallet, Package as PackageIcon, Users, Trash2, Eye, BarChart3 } from 'lucide-react';
+import { Plus, User, Clock, CheckCircle, Search, Calendar, DollarSign, Filter, ChevronDown, Wallet, Package as PackageIcon, Users, Trash2, Eye, BarChart3, Edit3 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 
 import { addProjectToDB, addPackageToDB, updatePackageInDB, deletePackageFromDB, addPaymentAlertToDB } from '../lib/db';
@@ -60,6 +60,20 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
     totalAmount: 0,
     lineItems: [{ serviceName: '', quantity: 1, completedCount: 0 }] as PackageLineItem[],
     milestones: [{ label: 'Advance', percentage: 25, triggerAtQuantity: 0, isAdvance: true }] as { label: string; percentage: number; triggerAtQuantity: number; isAdvance: boolean }[]
+  });
+
+  // --- Edit Package State ---
+  const [editingPackage, setEditingPackage] = useState<Package | null>(null);
+  const [editPackageForm, setEditPackageForm] = useState<{
+    packageName: string;
+    period: string;
+    totalAmount: number;
+    lineItems: PackageLineItem[];
+    milestones: { label: string; percentage: number; triggerAtQuantity: number; isAdvance: boolean }[];
+  }>({
+    packageName: '', period: '', totalAmount: 0,
+    lineItems: [{ serviceName: '', quantity: 1, completedCount: 0 }],
+    milestones: []
   });
 
   const addLineItem = () => {
@@ -193,6 +207,60 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
     } catch (error) {
       console.error('Error creating package:', error);
       alert('Failed to create package. Check console for details.');
+    }
+  };
+
+  const openEditPackage = (pkg: Package) => {
+    setEditingPackage(pkg);
+    setEditPackageForm({
+      packageName: pkg.packageName,
+      period: pkg.period,
+      totalAmount: pkg.totalAmount,
+      lineItems: pkg.lineItems.map(li => ({ ...li })),
+      milestones: pkg.paymentMilestones.map(m => ({
+        label: m.label,
+        percentage: m.percentage,
+        triggerAtQuantity: m.triggerAtQuantity ?? 0,
+        isAdvance: m.status === 'received'
+      }))
+    });
+  };
+
+  const handleUpdatePackage = async (e: any) => {
+    e.preventDefault?.();
+    if (!editingPackage) return;
+    const totalAmount = editPackageForm.totalAmount;
+
+    // Rebuild milestones — preserve existing status, recalculate amountDue with new total
+    const updatedMilestones = editPackageForm.milestones.map((m, i) => {
+      const existing = editingPackage.paymentMilestones[i];
+      return {
+        label: m.label,
+        percentage: m.percentage,
+        triggerAtQuantity: m.triggerAtQuantity,
+        status: existing?.status ?? (m.isAdvance ? 'received' : 'upcoming'),
+        amountDue: Math.round((m.percentage / 100) * totalAmount),
+        ...(existing?.paidDate ? { paidDate: existing.paidDate } : {})
+      };
+    });
+
+    // Recalc received amount from preserved milestones
+    const recalcReceived = updatedMilestones
+      .filter(m => m.status === 'received')
+      .reduce((sum, m) => sum + m.amountDue, 0);
+
+    try {
+      await updatePackageInDB(editingPackage.id, {
+        packageName: editPackageForm.packageName,
+        period: editPackageForm.period,
+        totalAmount,
+        lineItems: editPackageForm.lineItems.filter(li => li.serviceName.trim() !== ''),
+        paymentMilestones: updatedMilestones,
+        receivedAmount: recalcReceived
+      } as any);
+      setEditingPackage(null);
+    } catch (error) {
+      console.error('Error updating package:', error);
     }
   };
 
@@ -636,6 +704,13 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                         <div className="flex items-center gap-3 mb-1">
                           <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-violet-50 text-violet-700 border border-violet-200">📦 {pkg.period}</span>
                           <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Active</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEditPackage(pkg); }}
+                            className="ml-1 p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all"
+                            title="Edit Package"
+                          >
+                            <Edit3 size={14} />
+                          </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
                             className="ml-auto p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
@@ -1284,6 +1359,187 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                   className="w-full py-3 bg-violet-600 text-white font-black rounded-xl shadow-lg hover:bg-violet-700 active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-xs shadow-violet-600/20"
                 >
                   Create Package
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* === EDIT PACKAGE MODAL === */}
+      {editingPackage && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in duration-300 border border-white/20 max-h-[90vh] overflow-y-auto">
+            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-violet-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-violet-600/20">
+                  <Edit3 size={20} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight leading-none">Edit Package</h3>
+                  <p className="text-slate-400 font-bold text-[9px] mt-1 uppercase tracking-widest opacity-80">{editingPackage.clientName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingPackage(null)}
+                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center transition-all bg-white border border-slate-100 hover:rotate-90"
+              >
+                <Plus className="rotate-45 text-slate-400" size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdatePackage} className="p-6 space-y-6">
+              {/* Package Name + Period */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Package Name</label>
+                  <input
+                    required
+                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 text-sm outline-none focus:border-violet-500"
+                    value={editPackageForm.packageName}
+                    onChange={e => setEditPackageForm({ ...editPackageForm, packageName: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Period</label>
+                  <input
+                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 text-sm outline-none focus:border-violet-500"
+                    placeholder="e.g. February"
+                    value={editPackageForm.period}
+                    onChange={e => setEditPackageForm({ ...editPackageForm, period: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Total Amount */}
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Total Amount (₹)</label>
+                <input
+                  type="number"
+                  className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 text-sm outline-none focus:border-violet-500"
+                  value={editPackageForm.totalAmount}
+                  onChange={e => setEditPackageForm({ ...editPackageForm, totalAmount: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+
+              {/* Line Items */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Line Items</label>
+                  <button type="button"
+                    onClick={() => setEditPackageForm(prev => ({ ...prev, lineItems: [...prev.lineItems, { serviceName: '', quantity: 1, completedCount: 0 }] }))}
+                    className="text-[10px] font-black text-violet-600 uppercase tracking-widest hover:text-violet-700 flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Add Item
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {editPackageForm.lineItems.map((li, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="Service name"
+                        className="flex-1 p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none"
+                        value={li.serviceName}
+                        onChange={e => setEditPackageForm(prev => ({ ...prev, lineItems: prev.lineItems.map((l, i) => i === idx ? { ...l, serviceName: e.target.value } : l) }))}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Qty"
+                        className="w-20 p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none"
+                        value={li.quantity}
+                        min={1}
+                        onChange={e => setEditPackageForm(prev => ({ ...prev, lineItems: prev.lineItems.map((l, i) => i === idx ? { ...l, quantity: parseInt(e.target.value) || 1 } : l) }))}
+                      />
+                      {editPackageForm.lineItems.length > 1 && (
+                        <button type="button"
+                          onClick={() => setEditPackageForm(prev => ({ ...prev, lineItems: prev.lineItems.filter((_, i) => i !== idx) }))}
+                          className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Payment Milestones */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Payment Milestones</label>
+                  <button type="button"
+                    onClick={() => setEditPackageForm(prev => ({ ...prev, milestones: [...prev.milestones, { label: '', percentage: 0, triggerAtQuantity: 0, isAdvance: false }] }))}
+                    className="text-[10px] font-black text-violet-600 uppercase tracking-widest hover:text-violet-700 flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Add Milestone
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {editPackageForm.milestones.map((m, idx) => {
+                    const existingMs = editingPackage.paymentMilestones[idx];
+                    const alreadyTriggered = existingMs && (existingMs.status === 'received' || existingMs.status === 'due');
+                    return (
+                      <div key={idx} className={`p-4 rounded-xl border bg-slate-50/50 ${alreadyTriggered ? 'border-emerald-200' : 'border-slate-200'}`}>
+                        {alreadyTriggered && (
+                          <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-2">⚡ Already triggered — label &amp; % only</p>
+                        )}
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="text"
+                            placeholder="Label"
+                            className="flex-1 p-3 border border-slate-200 rounded-xl bg-white font-bold text-xs text-slate-700 outline-none"
+                            value={m.label}
+                            onChange={e => setEditPackageForm(prev => ({ ...prev, milestones: prev.milestones.map((ms, i) => i === idx ? { ...ms, label: e.target.value } : ms) }))}
+                          />
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              placeholder="%"
+                              className="w-20 p-3 border border-slate-200 rounded-xl bg-white font-bold text-xs text-slate-700 outline-none"
+                              value={m.percentage}
+                              onChange={e => setEditPackageForm(prev => ({ ...prev, milestones: prev.milestones.map((ms, i) => i === idx ? { ...ms, percentage: parseInt(e.target.value) || 0 } : ms) }))}
+                            />
+                            <span className="text-[10px] font-black text-slate-400">%</span>
+                          </div>
+                          {!alreadyTriggered && (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                placeholder="Qty"
+                                className="w-20 p-3 border border-slate-200 rounded-xl bg-white font-bold text-xs text-slate-700 outline-none"
+                                value={m.triggerAtQuantity}
+                                onChange={e => setEditPackageForm(prev => ({ ...prev, milestones: prev.milestones.map((ms, i) => i === idx ? { ...ms, triggerAtQuantity: parseInt(e.target.value) || 0 } : ms) }))}
+                              />
+                              <span className="text-[10px] font-black text-slate-400">items</span>
+                            </div>
+                          )}
+                          {editPackageForm.milestones.length > 1 && !alreadyTriggered && (
+                            <button type="button"
+                              onClick={() => setEditPackageForm(prev => ({ ...prev, milestones: prev.milestones.filter((_, i) => i !== idx) }))}
+                              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                        {editPackageForm.totalAmount > 0 && (
+                          <p className="text-[10px] font-black text-slate-400 mt-2 ml-1">
+                            = ₹{Math.round((m.percentage / 100) * editPackageForm.totalAmount).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-violet-600 text-white font-black rounded-xl shadow-lg hover:bg-violet-700 active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-xs shadow-violet-600/20"
+                >
+                  Save Changes
                 </button>
               </div>
             </form>

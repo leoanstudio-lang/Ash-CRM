@@ -82,13 +82,18 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
           const lineItems = [...(pkgData.lineItems || [])];
           const idx = project.packageLineItemIndex;
 
-          // Step 1: Increment the relevant line item's completedCount
+          // Step 1: Increment the relevant line item's completedCount (stored value)
           if (idx !== undefined && idx >= 0 && idx < lineItems.length) {
             lineItems[idx] = { ...lineItems[idx], completedCount: (lineItems[idx].completedCount || 0) + 1 };
           }
 
-          // Step 2: Calculate total completed across ALL line items
-          const totalCompleted = lineItems.reduce((sum, li) => sum + (li.completedCount || 0), 0);
+          // Step 2: Calculate total completed using live project count (consistent with visual display)
+          // Count projects linked to this package with any completed status, +1 for the current task
+          // (local projects prop hasn't updated yet since updateProjectInDB was just called)
+          const totalCompleted = projects.filter(p =>
+            p.packageId === project.packageId &&
+            (p.status === 'Finished' || p.status === 'Completed' || p.status === 'Closed')
+          ).length + 1;
 
           // Step 3: Check each milestone — if upcoming and threshold crossed, trigger it
           const milestones = [...(pkgData.paymentMilestones || [])];
