@@ -1,8 +1,9 @@
 
 import React, { useState } from 'react';
 import { Employee, Service, Role } from '../types';
-import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save } from 'lucide-react';
-import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB } from '../lib/db';
+import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook } from 'lucide-react';
+import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, getCompanyProfile, saveCompanyProfile } from '../lib/db';
+import { CompanyProfile } from '../types';
 
 interface SettingsProps {
   employees: Employee[];
@@ -13,7 +14,74 @@ interface SettingsProps {
 }
 
 const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'admin'>('employees');
+  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'admin' | 'company'>('employees');
+
+  // Company Profile State
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [companyForm, setCompanyForm] = useState<CompanyProfile>({
+    companyName: '',
+    tagline: '',
+    contacts: [],
+    socials: []
+  });
+
+  const addContact = () => {
+    setCompanyForm({
+      ...companyForm,
+      contacts: [...companyForm.contacts, { id: Date.now().toString(), label: '', value: '' }]
+    });
+  };
+
+  const removeContact = (id: string) => {
+    setCompanyForm({
+      ...companyForm,
+      contacts: companyForm.contacts.filter(c => c.id !== id)
+    });
+  };
+
+  const updateContact = (id: string, field: 'label' | 'value', val: string) => {
+    setCompanyForm({
+      ...companyForm,
+      contacts: companyForm.contacts.map(c => c.id === id ? { ...c, [field]: val } : c)
+    });
+  };
+
+  const addSocial = () => {
+    setCompanyForm({
+      ...companyForm,
+      socials: [...companyForm.socials, { id: Date.now().toString(), label: '', value: '' }]
+    });
+  };
+
+  const removeSocial = (id: string) => {
+    setCompanyForm({
+      ...companyForm,
+      socials: companyForm.socials.filter(s => s.id !== id)
+    });
+  };
+
+  const updateSocial = (id: string, field: 'label' | 'value', val: string) => {
+    setCompanyForm({
+      ...companyForm,
+      socials: companyForm.socials.map(s => s.id === id ? { ...s, [field]: val } : s)
+    });
+  };
+
+  React.useEffect(() => {
+    const fetchCompanyData = async () => {
+      const data = await getCompanyProfile();
+      if (data) setCompanyForm(data);
+    };
+    fetchCompanyData();
+  }, []);
+
+  const handleSaveConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingConfig(true);
+    await saveCompanyProfile(companyForm);
+    setIsSavingConfig(false);
+    alert('Company Configuration saved successfully!');
+  };
 
   // States for better form handling
   const [newServiceName, setNewServiceName] = useState('');
@@ -88,6 +156,12 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) =>
           className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'services' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
         >
           Service Master List
+        </button>
+        <button
+          onClick={() => setActiveTab('company')}
+          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'company' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+        >
+          Company Config
         </button>
         <button
           onClick={() => setActiveTab('admin')}
@@ -331,8 +405,165 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) =>
             </div>
           </div>
         )}
+
+        {activeTab === 'company' && (
+          <div className="max-w-2xl space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div>
+              <h3 className="text-2xl font-black text-slate-900">Company Configuration</h3>
+              <p className="text-sm text-slate-500 mt-1">Configure your company identity and social details for generated reports.</p>
+            </div>
+
+            <form onSubmit={handleSaveConfig} className="bg-slate-50 p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1 flex items-center gap-2">
+                    <Building2 size={12} /> Company Name
+                  </label>
+                  <input
+                    required
+                    className="w-full p-4 border border-slate-200 rounded-2xl bg-white font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    placeholder="e.g. Yender Media"
+                    value={companyForm.companyName}
+                    onChange={e => setCompanyForm({ ...companyForm, companyName: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1 flex items-center gap-2">
+                    <UserPlus size={12} /> Tagline
+                  </label>
+                  <input
+                    className="w-full p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                    placeholder="e.g. Creative Solutions"
+                    value={companyForm.tagline}
+                    onChange={e => setCompanyForm({ ...companyForm, tagline: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1 flex items-center gap-2">
+                  <Globe size={12} /> Company Logo (URL)
+                </label>
+                <div className="flex gap-4">
+                  <input
+                    className="flex-1 p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono text-sm"
+                    placeholder="e.g. https://yourwebsite.com/logo.png"
+                    value={companyForm.logoUrl || ''}
+                    onChange={e => setCompanyForm({ ...companyForm, logoUrl: e.target.value })}
+                  />
+                  {companyForm.logoUrl && (
+                    <div className="w-14 h-14 rounded-xl border border-slate-200 bg-white shadow-sm flex items-center justify-center overflow-hidden shrink-0">
+                      <img src={companyForm.logoUrl} alt="Logo Preview" className="max-w-full max-h-full object-contain p-1" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 ml-1 mt-2">Paste a direct link to a transparent .png or .svg of your logo. This will be used in the PDF builder.</p>
+              </div>
+
+              {/* Dynamic Contacts Section */}
+              <div className="pt-6 border-t border-slate-200">
+                <div className="flex justify-between items-center mb-4">
+                  <h4 className="font-black text-slate-800 flex items-center gap-2"><Smartphone size={16} className="text-blue-500" /> Contact Details</h4>
+                  <button type="button" onClick={addContact} className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-blue-100 transition-colors">
+                    <Plus size={14} /> Add Contact
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {companyForm.contacts?.map((contact, index) => (
+                    <div key={contact.id} className="flex gap-4 items-start animate-in fade-in slide-in-from-left-2 duration-300">
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Label (e.g. Primary Mobile, Address)</label>
+                        <input
+                          required
+                          className="w-full p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                          placeholder="Label"
+                          value={contact.label}
+                          onChange={e => updateContact(contact.id, 'label', e.target.value)}
+                        />
+                      </div>
+                      <div className="flex-[2]">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Value (e.g. +1 234 567 890)</label>
+                        <div className="flex gap-2">
+                          <input
+                            required
+                            className="w-full p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                            placeholder="Value"
+                            value={contact.value}
+                            onChange={e => updateContact(contact.id, 'value', e.target.value)}
+                          />
+                          <button type="button" onClick={() => removeContact(contact.id)} className="p-4 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all">
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {(!companyForm.contacts || companyForm.contacts.length === 0) && (
+                    <p className="text-sm text-slate-400 italic text-center py-4 bg-white rounded-2xl border border-dashed border-slate-200">No contact details added yet.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Dynamic Socials Section */}
+              <div className="pt-6 border-t border-slate-200">
+                <div className="flex justify-between items-center mb-4">
+                  <h4 className="font-black text-slate-800 flex items-center gap-2"><Globe size={16} className="text-indigo-500" /> Web & Social Links</h4>
+                  <button type="button" onClick={addSocial} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-indigo-100 transition-colors">
+                    <Plus size={14} /> Add Link
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  {companyForm.socials?.map((social, index) => (
+                    <div key={social.id} className="flex gap-4 items-start animate-in fade-in slide-in-from-left-2 duration-300">
+                      <div className="flex-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Platform (e.g. Website, Instagram)</label>
+                        <input
+                          required
+                          className="w-full p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                          placeholder="Platform"
+                          value={social.label}
+                          onChange={e => updateSocial(social.id, 'label', e.target.value)}
+                        />
+                      </div>
+                      <div className="flex-[2]">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">URL / Link</label>
+                        <div className="flex gap-2">
+                          <input
+                            required
+                            className="w-full p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                            placeholder="https://"
+                            value={social.value}
+                            onChange={e => updateSocial(social.id, 'value', e.target.value)}
+                          />
+                          <button type="button" onClick={() => removeSocial(social.id)} className="p-4 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all">
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {(!companyForm.socials || companyForm.socials.length === 0) && (
+                    <p className="text-sm text-slate-400 italic text-center py-4 bg-white rounded-2xl border border-dashed border-slate-200">No web or social links added yet.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-200">
+                <button
+                  type="submit"
+                  disabled={isSavingConfig}
+                  className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black rounded-2xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isSavingConfig ? <span className="animate-pulse">Saving...</span> : <><Save size={18} /> Save Company Configuration</>}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </div>
-    </div>
+    </div >
   );
 };
 

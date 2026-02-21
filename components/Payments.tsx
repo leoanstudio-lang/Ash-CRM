@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { PaymentAlert, Package, Client } from '../types';
 import { Bell, History, CheckCircle, Clock, PauseCircle, Undo2, Trash2, Wallet, AlertTriangle, ChevronDown } from 'lucide-react';
-import { updatePaymentAlertInDB, deletePaymentAlertFromDB } from '../lib/db';
+import { updatePaymentAlertInDB, deletePaymentAlertFromDB, updatePackageInDB } from '../lib/db';
 
 interface PaymentsProps {
     paymentAlerts: PaymentAlert[];
@@ -25,6 +25,27 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
         .sort((a, b) => new Date(b.resolvedAt || b.triggeredAt).getTime() - new Date(a.resolvedAt || a.triggeredAt).getTime());
 
     const handleMarkReceived = async (alertId: string) => {
+        const alert = paymentAlerts.find(a => a.id === alertId);
+        if (alert && alert.type === 'package' && alert.packageId) {
+            const pkg = packages.find(p => p.id === alert.packageId);
+            if (pkg) {
+                // Update package received amount
+                const newReceivedAmount = (pkg.receivedAmount || 0) + alert.amount;
+                // Update milestone status
+                const updatedMilestones = pkg.paymentMilestones.map(m => {
+                    if (m.label === alert.milestoneLabel) {
+                        return { ...m, status: 'received' as const };
+                    }
+                    return m;
+                });
+
+                await updatePackageInDB(pkg.id, {
+                    receivedAmount: newReceivedAmount,
+                    paymentMilestones: updatedMilestones
+                });
+            }
+        }
+
         await updatePaymentAlertInDB(alertId, {
             status: 'received',
             resolvedAt: new Date().toISOString()
@@ -40,6 +61,27 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
     };
 
     const handleUndoReceived = async (alertId: string) => {
+        const alert = paymentAlerts.find(a => a.id === alertId);
+        if (alert && alert.type === 'package' && alert.packageId) {
+            const pkg = packages.find(p => p.id === alert.packageId);
+            if (pkg) {
+                // Deduct from package received amount
+                const newReceivedAmount = Math.max(0, (pkg.receivedAmount || 0) - alert.amount);
+                // Revert milestone status to due
+                const updatedMilestones = pkg.paymentMilestones.map(m => {
+                    if (m.label === alert.milestoneLabel) {
+                        return { ...m, status: 'due' as const };
+                    }
+                    return m;
+                });
+
+                await updatePackageInDB(pkg.id, {
+                    receivedAmount: newReceivedAmount,
+                    paymentMilestones: updatedMilestones
+                });
+            }
+        }
+
         await updatePaymentAlertInDB(alertId, {
             status: 'due',
             resolvedAt: undefined
@@ -53,6 +95,28 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
 
     const confirmDelete = async () => {
         if (alertToDelete) {
+            // Check if this was a received package payment that needs reversing
+            const alert = paymentAlerts.find(a => a.id === alertToDelete);
+            if (alert && alert.type === 'package' && alert.packageId && alert.status === 'received') {
+                const pkg = packages.find(p => p.id === alert.packageId);
+                if (pkg) {
+                    // Deduct from package received amount
+                    const newReceivedAmount = Math.max(0, (pkg.receivedAmount || 0) - alert.amount);
+                    // Revert milestone status to due
+                    const updatedMilestones = pkg.paymentMilestones.map(m => {
+                        if (m.label === alert.milestoneLabel) {
+                            return { ...m, status: 'due' as const };
+                        }
+                        return m;
+                    });
+
+                    await updatePackageInDB(pkg.id, {
+                        receivedAmount: newReceivedAmount,
+                        paymentMilestones: updatedMilestones
+                    });
+                }
+            }
+
             await deletePaymentAlertFromDB(alertToDelete);
             setAlertToDelete(null);
         }

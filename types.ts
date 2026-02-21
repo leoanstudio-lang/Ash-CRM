@@ -123,3 +123,17 @@ export interface PaymentAlert {
   resolvedAt?: string;
   type: 'package' | 'standalone'; // distinguish package vs standalone payments
 }
+
+export interface DynamicField {
+  id: string; // Unique identifier for React mapping and deletion
+  label: string; // The title (e.g., "Customer Care", "TikTok", "Head Office")
+  value: string; // The actual content/URL
+}
+
+export interface CompanyProfile {
+  companyName: string;
+  tagline: string;
+  logoUrl?: string;
+  contacts: DynamicField[];
+  socials: DynamicField[];
+}

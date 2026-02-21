@@ -15,6 +15,34 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'All' | 'Designing' | 'Developing'>('All');
   const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      const allFilteredIds = filteredProjects.map(p => p.id);
+      setSelectedProjects(prev => Array.from(new Set([...prev, ...allFilteredIds])));
+    } else {
+      const filteredIds = new Set(filteredProjects.map(p => p.id));
+      setSelectedProjects(prev => prev.filter(id => !filteredIds.has(id)));
+    }
+  };
+
+  const handleSelectProject = (e: React.ChangeEvent<HTMLInputElement>, id: string) => {
+    if (e.target.checked) {
+      setSelectedProjects(prev => [...prev, id]);
+    } else {
+      setSelectedProjects(prev => prev.filter(projectId => projectId !== id));
+    }
+  };
+
+  const confirmBulkDelete = async () => {
+    setIsBulkDeleteModalOpen(false);
+    if (selectedProjects.length > 0) {
+      await Promise.all(selectedProjects.map(id => deleteProjectFromDB(id)));
+      setSelectedProjects([]);
+    }
+  };
 
   const handleDeleteClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -39,6 +67,8 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
     if (filterType === 'Developing') return matchesSearch && isDev;
     return matchesSearch;
   });
+
+  const isAllSelected = filteredProjects.length > 0 && filteredProjects.every(p => selectedProjects.includes(p.id));
 
   return (
     <div className="space-y-4 animate-in fade-in duration-500">
@@ -85,15 +115,26 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
             </button>
           </div>
 
-          <div className="relative w-full md:w-64 group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={14} />
-            <input
-              type="text"
-              placeholder="Search history..."
-              className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-sm transition-all text-xs font-semibold"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            {selectedProjects.length > 0 && (
+              <button
+                onClick={() => setIsBulkDeleteModalOpen(true)}
+                className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-xl text-[10px] font-black tracking-widest uppercase transition-all flex items-center gap-2 shadow-sm whitespace-nowrap animate-in zoom-in duration-200"
+              >
+                <Trash2 size={14} />
+                Delete Selected ({selectedProjects.length})
+              </button>
+            )}
+            <div className="relative w-full md:w-64 group">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={14} />
+              <input
+                type="text"
+                placeholder="Search history..."
+                className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 shadow-sm transition-all text-xs font-semibold"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
           </div>
         </div>
 
@@ -101,6 +142,14 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
           <table className="w-full text-left">
             <thead>
               <tr className="bg-slate-50 text-slate-400 text-[9px] font-black uppercase tracking-widest border-b border-slate-100">
+                <th className="px-6 py-4 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={handleSelectAll}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                </th>
                 <th className="px-6 py-4">Project Details</th>
                 <th className="px-6 py-4">Client Identity</th>
                 <th className="px-6 py-4">Production Log</th>
@@ -114,7 +163,15 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
                 const isGraphic = project.type === 'Graphic';
 
                 return (
-                  <tr key={project.id} className="hover:bg-slate-50/80 transition-all duration-300 group">
+                  <tr key={project.id} className={`transition-all duration-300 group ${selectedProjects.includes(project.id) ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'}`}>
+                    <td className="px-6 py-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedProjects.includes(project.id)}
+                        onChange={(e) => handleSelectProject(e, project.id)}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </td>
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-3">
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-sm transition-transform group-hover:scale-105 ${isGraphic ? 'bg-indigo-50 text-indigo-600 border border-indigo-100' : 'bg-blue-50 text-blue-600 border border-blue-100'}`}>
@@ -203,7 +260,7 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
               })}
               {filteredProjects.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-20 text-center text-slate-400">
+                  <td colSpan={6} className="py-20 text-center text-slate-400">
                     <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3 shadow-inner">
                       <Search className="opacity-20" size={24} />
                     </div>
@@ -215,6 +272,35 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
           </table>
         </div>
       </div>
+      {/* Bulk Delete Notification / Confirmation Modal */}
+      {isBulkDeleteModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 border border-slate-100 transform transition-all scale-100">
+            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 mx-auto">
+              <Trash2 className="text-red-500" size={24} />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 text-center mb-2">Delete {selectedProjects.length} Selected Project(s)?</h3>
+            <p className="text-center text-slate-500 text-xs font-medium mb-6 leading-relaxed">
+              Are you sure you want to permanently delete the selected project records? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsBulkDeleteModalOpen(false)}
+                className="flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBulkDelete}
+                className="flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-red-500 text-white shadow-lg shadow-red-500/30 hover:bg-red-600 transition-colors"
+              >
+                Delete Selected
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete Confirmation Modal */}
       {projectToDelete && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">

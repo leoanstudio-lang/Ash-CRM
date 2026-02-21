@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Employee, Project, Priority, Client, Package } from '../types';
-import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard } from 'lucide-react';
+import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter } from 'lucide-react';
 import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB } from '../lib/db';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
 type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working';
@@ -17,6 +17,15 @@ interface EmployeePanelProps {
 
 const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clients, onLogout }) => {
   const [currentView, setCurrentView] = useState<EmployeeView>('dashboard');
+
+  // --- New Filter State ---
+  const [taskSearch, setTaskSearch] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<'all' | 'custom' | 'specific'>('all');
+  const [customDateRange, setCustomDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
+  const [specificDate, setSpecificDate] = useState<string>('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
   // Use local date to respect user's timezone (e.g., IST)
   // ... date logic remains same ...
   const now = new Date();
@@ -87,13 +96,23 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
             lineItems[idx] = { ...lineItems[idx], completedCount: (lineItems[idx].completedCount || 0) + 1 };
           }
 
-          // Step 2: Calculate total completed using live project count (consistent with visual display)
-          // Count projects linked to this package with any completed status, +1 for the current task
-          // (local projects prop hasn't updated yet since updateProjectInDB was just called)
-          const totalCompleted = projects.filter(p =>
-            p.packageId === project.packageId &&
-            (p.status === 'Finished' || p.status === 'Completed' || p.status === 'Closed')
-          ).length + 1;
+          // Step 2: Calculate total completed by directly querying the database (prevents race condition)
+          const projectsRef = collection(db, 'projects');
+          const q = query(projectsRef, where('packageId', '==', project.packageId));
+          const querySnapshot = await getDocs(q);
+          const allLinkedProjects = querySnapshot.docs.map(d => d.data() as Project);
+
+          // Count all completed ones from the true live state, but if our CURRENT task isn't saved as finished yet, we add 1.
+          // Because updateProjectInDB is async and we don't await its final db propagation instantly sometimes.
+          const dbCompleted = allLinkedProjects.filter(p =>
+            p.status === 'Finished' || p.status === 'Completed' || p.status === 'Closed'
+          ).length;
+
+          // Determine if the current task was already counted as finished in that split second
+          const currentTaskInDb = allLinkedProjects.find(p => p.id === project.id);
+          const wasCurrentTaskCounted = currentTaskInDb && (currentTaskInDb.status === 'Finished' || currentTaskInDb.status === 'Completed' || currentTaskInDb.status === 'Closed');
+
+          const totalCompleted = wasCurrentTaskCounted ? dbCompleted : dbCompleted + 1;
 
           // Step 3: Check each milestone — if upcoming and threshold crossed, trigger it
           const milestones = [...(pkgData.paymentMilestones || [])];
@@ -152,17 +171,55 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
 
   // Filter tasks based on current view
   const getFilteredTasks = () => {
+    let tasks = activeTasks;
     switch (currentView) {
       case 'pending':
-        return activeTasks.filter(t => t.status === 'Pending' || t.status === 'Allocated');
+        tasks = activeTasks.filter(t => t.status === 'Pending' || t.status === 'Allocated');
+        break;
       case 'waiting':
-        return activeTasks.filter(t => t.status === 'Waiting');
+        tasks = activeTasks.filter(t => t.status === 'Waiting');
+        break;
       case 'working':
-        return activeTasks.filter(t => t.status === 'Working');
+        tasks = activeTasks.filter(t => t.status === 'Working');
+        break;
       case 'dashboard':
       default:
-        return activeTasks; // Show all active tasks
+        tasks = activeTasks; // Show all active tasks
+        break;
     }
+
+    // Apply additional filters
+    return tasks
+      // Search filter
+      .filter(p => {
+        if (!taskSearch.trim()) return true;
+        const q = taskSearch.toLowerCase();
+        return (
+          (p.serviceName || '').toLowerCase().includes(q) ||
+          (p.clientName || '').toLowerCase().includes(q) ||
+          (p.description || '').toLowerCase().includes(q)
+        );
+      })
+      // Priority filter
+      .filter(p => !filterPriority || p.priority === filterPriority)
+      // Date filter (Date Range or Specific Date)
+      .filter(p => {
+        if (selectedDateFilter === 'all') return true;
+        if (selectedDateFilter === 'custom') {
+          if (!customDateRange.start || !customDateRange.end) return true;
+          const projectDate = new Date(p.startDate || p.createdAt || '');
+          const start = new Date(customDateRange.start);
+          const end = new Date(customDateRange.end);
+          end.setHours(23, 59, 59, 999);
+          return projectDate >= start && projectDate <= end;
+        }
+        if (selectedDateFilter === 'specific') {
+          if (!specificDate) return true;
+          const pDate = new Date(p.startDate || p.createdAt || '').toISOString().split('T')[0];
+          return pDate === specificDate;
+        }
+        return true;
+      });
   };
 
   const filteredTasks = getFilteredTasks();
@@ -374,6 +431,130 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
             <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center text-rose-500">
               <PauseCircle size={18} />
             </div>
+          </div>
+        </div>
+
+        {/* Filter Bar */}
+        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-4 mb-8">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Search */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+              <input
+                type="text"
+                placeholder="Search tasks, clients..."
+                className="w-full pl-9 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                value={taskSearch}
+                onChange={e => setTaskSearch(e.target.value)}
+              />
+            </div>
+
+            {/* Priority Filter */}
+            <div className="relative">
+              <select
+                value={filterPriority}
+                onChange={e => setFilterPriority(e.target.value)}
+                className="w-full sm:w-auto px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest appearance-none outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer min-w-[140px]"
+              >
+                <option value="">All Priority</option>
+                <option value="Urgent">🔴 Urgent</option>
+                <option value="High">🟠 High</option>
+                <option value="Medium">🔵 Medium</option>
+                <option value="Low">⚪ Low</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+            </div>
+
+            {/* Date Filter Dropdown */}
+            <div className="relative group min-w-[160px]">
+              <select
+                value={selectedDateFilter}
+                onChange={(e) => {
+                  const val = e.target.value as 'all' | 'custom' | 'specific';
+                  setSelectedDateFilter(val);
+                  if (val === 'custom' || val === 'specific') {
+                    setShowDatePicker(true);
+                  } else {
+                    setShowDatePicker(false);
+                  }
+                }}
+                className="w-full sm:w-auto px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest appearance-none outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="all">ALL DATES</option>
+                <option value="custom">CUSTOM RANGE</option>
+                <option value="specific">SPECIFIC DATE</option>
+              </select>
+              <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+
+              {/* Popover for Dates */}
+              {showDatePicker && (selectedDateFilter === 'custom' || selectedDateFilter === 'specific') && (
+                <div className="absolute top-full right-0 mt-2 bg-white rounded-2xl shadow-xl border border-slate-100 p-4 z-50 min-w-[300px] animate-in slide-in-from-top-2">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="font-bold text-slate-800 text-sm">
+                      {selectedDateFilter === 'custom' ? 'Select Date Range' : 'Select Specific Date'}
+                    </h4>
+                    <button onClick={() => setShowDatePicker(false)} className="text-slate-400 hover:text-slate-600">
+                      ✕
+                    </button>
+                  </div>
+
+                  {selectedDateFilter === 'custom' ? (
+                    <div className="flex flex-col gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Start Date</label>
+                        <input
+                          type="date"
+                          value={customDateRange.start}
+                          onChange={(e) => setCustomDateRange({ ...customDateRange, start: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-600 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">End Date</label>
+                        <input
+                          type="date"
+                          value={customDateRange.end}
+                          onChange={(e) => setCustomDateRange({ ...customDateRange, end: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-600 transition-all"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Date</label>
+                        <input
+                          type="date"
+                          value={specificDate}
+                          onChange={(e) => setSpecificDate(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-600 transition-all"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={() => setShowDatePicker(false)} className="w-full mt-4 bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors">
+                    Apply Filter
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Clear Filters */}
+            {(taskSearch || filterPriority || selectedDateFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setTaskSearch('');
+                  setFilterPriority('');
+                  setSelectedDateFilter('all');
+                  setCustomDateRange({ start: '', end: '' });
+                  setSpecificDate('');
+                  setShowDatePicker(false);
+                }}
+                className="px-4 py-3 bg-red-50 text-red-600 border border-red-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all"
+              >
+                ✕ Clear
+              </button>
+            )}
           </div>
         </div>
 

@@ -8,11 +8,12 @@ import {
     doc,
     query,
     getDocs,
+    getDoc,
     setDoc,
     Timestamp
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Project, Client, Lead, Employee, Service, Package, PaymentAlert } from "../types";
+import { Project, Client, Lead, Employee, Service, Package, PaymentAlert, CompanyProfile } from "../types";
 
 // --- Generic Helpers ---
 
@@ -229,3 +230,29 @@ export const deletePaymentAlertFromDB = async (id: string) => {
         console.error("Error deleting payment alert: ", e);
     }
 }
+
+// --- Config / Company Profile ---
+
+export const getCompanyProfile = async (): Promise<CompanyProfile | null> => {
+    try {
+        const docRef = doc(db, 'config', 'company_profile');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            return docSnap.data() as CompanyProfile;
+        }
+        return null;
+    } catch (error) {
+        console.error('Error fetching company profile:', error);
+        return null;
+    }
+};
+
+export const saveCompanyProfile = async (profile: CompanyProfile) => {
+    try {
+        const docRef = doc(db, 'config', 'company_profile');
+        await setDoc(docRef, profile);
+        console.log('Company Profile successfully saved!');
+    } catch (error) {
+        console.error('Error saving company profile:', error);
+    }
+};
