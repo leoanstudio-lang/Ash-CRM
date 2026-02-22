@@ -1,20 +1,22 @@
-
 import React, { useState } from 'react';
 import { PaymentAlert, Package, Client } from '../types';
-import { Bell, History, CheckCircle, Clock, PauseCircle, Undo2, Trash2, Wallet, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Bell, History, CheckCircle, Clock, PauseCircle, Undo2, Trash2, Wallet, AlertTriangle, ChevronDown, LineChart as ChartIcon, FileText, Download, PieChart } from 'lucide-react';
 import { updatePaymentAlertInDB, deletePaymentAlertFromDB, updatePackageInDB } from '../lib/db';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface PaymentsProps {
     paymentAlerts: PaymentAlert[];
     packages: Package[];
     clients: Client[];
 }
-
-type PaymentTab = 'alerts' | 'history';
+type PaymentTab = 'alerts' | 'history' | 'finance' | 'analytics';
 
 const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients }) => {
     const [activeTab, setActiveTab] = useState<PaymentTab>('alerts');
     const [alertToDelete, setAlertToDelete] = useState<string | null>(null);
+    const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
     // Payment Alerts = status is 'due', 'pending', or 'waiting'
     const activeAlerts = paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting');
@@ -23,6 +25,146 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
     const paymentHistory = paymentAlerts
         .filter(a => a.status === 'received')
         .sort((a, b) => new Date(b.resolvedAt || b.triggeredAt).getTime() - new Date(a.resolvedAt || a.triggeredAt).getTime());
+
+    // --- Data Aggregation for Finance & Analytics ---
+
+    // Group by Month-Year for Finance Ledger
+    const getFinanceData = () => {
+        const grouped: Record<string, { monthDate: Date, total: number, design: number, dev: number, payments: PaymentAlert[] }> = {};
+
+        paymentHistory.forEach(p => {
+            const d = new Date(p.resolvedAt || p.triggeredAt);
+            const monthName = d.toLocaleString('en-US', { month: 'long', year: 'numeric' }); // e.g., "February 2026"
+
+            if (!grouped[monthName]) {
+                grouped[monthName] = { monthDate: d, total: 0, design: 0, dev: 0, payments: [] };
+            }
+
+            grouped[monthName].total += p.amount;
+            if (p.department === 'Graphics Designing') grouped[monthName].design += p.amount;
+            if (p.department === 'Development') grouped[monthName].dev += p.amount;
+            grouped[monthName].payments.push(p);
+        });
+
+        return Object.entries(grouped)
+            .map(([label, data]) => ({ label, ...data }))
+            .sort((a, b) => b.monthDate.getTime() - a.monthDate.getTime()); // Newest first
+    };
+
+    const financeData = getFinanceData();
+
+    // Group by months of the year for Recharts (Analytics)
+    const availableYears = Array.from(new Set(paymentHistory.map(p => new Date(p.resolvedAt || p.triggeredAt).getFullYear()))).sort((a, b) => Number(b) - Number(a));
+    if (!availableYears.includes(new Date().getFullYear())) {
+        availableYears.unshift(new Date().getFullYear());
+    }
+
+    const getAnalyticsData = (year: number) => {
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const currentYear = new Date().getFullYear();
+        const currentMonth = new Date().getMonth();
+
+        const data = months.map((m, i) => {
+            const isFuture = year === currentYear && i > currentMonth;
+            return {
+                name: m,
+                Total: isFuture ? null : 0,
+                Design: isFuture ? null : 0,
+                Development: isFuture ? null : 0,
+                Trend: 0
+            };
+        });
+
+        paymentHistory.forEach(p => {
+            const d = new Date(p.resolvedAt || p.triggeredAt);
+            if (d.getFullYear() === year) {
+                const monthIdx = d.getMonth();
+                const record = data[monthIdx];
+                if (record.Total !== null) {
+                    record.Total += p.amount;
+                    // Old records with no dept go to Design so the line accurately tracks those earlier revenues
+                    if (p.department === 'Graphics Designing' || !p.department) {
+                        record.Design += p.amount;
+                    } else if (p.department === 'Development') {
+                        record.Development += p.amount;
+                    }
+                }
+            }
+        });
+
+        // Compute Mathematical Linear Regression Trend Line
+        const validMonths = year < currentYear ? 11 : currentMonth;
+        let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+        let n = 0;
+
+        for (let i = 0; i <= validMonths; i++) {
+            if (data[i].Total !== null) {
+                sumX += i;
+                sumY += data[i].Total as number;
+                sumXY += i * (data[i].Total as number);
+                sumX2 += i * i;
+                n++;
+            }
+        }
+
+        let slope = 0;
+        let intercept = 0;
+        if (n > 1) {
+            slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+            intercept = (sumY - slope * sumX) / n;
+        } else if (n === 1) {
+            intercept = sumY; // Flat horizontal trend if only 1 month exists
+        }
+
+        data.forEach((d, i) => {
+            d.Trend = Math.max(0, Math.round(slope * i + intercept));
+        });
+
+        return data;
+    };
+
+    const generateMonthlyReportPDF = (monthLabel: string, payments: PaymentAlert[], total: number, design: number, dev: number) => {
+        const doc = new jsPDF();
+
+        // Brand Colors
+        const deepEclipse: [number, number, number] = [10, 0, 40];
+        const textMuted: [number, number, number] = [100, 116, 139];
+
+        doc.setFontSize(22);
+        doc.setTextColor(...deepEclipse);
+        doc.setFont("helvetica", "bold");
+        doc.text("Financial Ledger", 14, 22);
+
+        doc.setFontSize(14);
+        doc.setTextColor(...textMuted);
+        doc.text(monthLabel, 14, 30);
+
+        // Summary Boxes
+        doc.setFontSize(10);
+        doc.text(`Total Revenue: Rs. ${total.toLocaleString()}`, 14, 40);
+        doc.text(`Graphics Designing: Rs. ${design.toLocaleString()}`, 14, 46);
+        doc.text(`Web Development: Rs. ${dev.toLocaleString()}`, 14, 52);
+
+        // Table
+        const tableBody = payments.map(p => [
+            formatDate(p.resolvedAt || p.triggeredAt),
+            p.clientName,
+            p.packageName || p.taskName || 'N/A',
+            p.department || 'N/A',
+            `Rs. ${p.amount.toLocaleString()}`
+        ]);
+
+        autoTable(doc, {
+            startY: 60,
+            head: [['DATE', 'CLIENT', 'SOURCE', 'DEPARTMENT', 'AMOUNT']],
+            body: tableBody,
+            headStyles: { fillColor: [248, 250, 252], textColor: textMuted, fontStyle: 'bold', fontSize: 8 },
+            bodyStyles: { fontSize: 9, textColor: deepEclipse },
+            columnStyles: { 4: { halign: 'right', fontStyle: 'bold' } }
+        });
+
+        doc.save(`Financial_Report_${monthLabel.replace(' ', '_')}.pdf`);
+    };
 
     const handleMarkReceived = async (alertId: string) => {
         const alert = paymentAlerts.find(a => a.id === alertId);
@@ -208,6 +350,26 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                     <History size={16} />
                     Payment History
                 </button>
+                <button
+                    onClick={() => setActiveTab('finance')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${activeTab === 'finance'
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                        : 'bg-white text-slate-400 border border-slate-100 hover:border-blue-200 hover:text-blue-600'
+                        }`}
+                >
+                    <PieChart size={16} />
+                    Finance
+                </button>
+                <button
+                    onClick={() => setActiveTab('analytics')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${activeTab === 'analytics'
+                        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                        : 'bg-white text-slate-400 border border-slate-100 hover:border-indigo-200 hover:text-indigo-600'
+                        }`}
+                >
+                    <ChartIcon size={16} />
+                    Analytics
+                </button>
             </div>
 
             {/* Payment Alerts Tab */}
@@ -228,8 +390,19 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                                     <div className="flex-1">
                                         <div className="flex items-center gap-3 mb-2">
                                             {getStatusBadge(alert.status)}
-                                            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">
+                                            <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
                                                 {alert.type === 'package' ? '📦 Package' : '📄 Standalone'}
+                                                {alert.department ? (
+                                                    <span className="flex items-center gap-2">
+                                                        <span className="text-slate-200 text-[8px]">•</span>
+                                                        <span className="text-blue-400">{alert.department}</span>
+                                                    </span>
+                                                ) : (
+                                                    <span className="flex items-center gap-2">
+                                                        <span className="text-slate-200 text-[8px]">•</span>
+                                                        <span className="text-amber-400">Old Record (No Dept Info)</span>
+                                                    </span>
+                                                )}
                                             </span>
                                         </div>
                                         <h4 className="font-black text-slate-900 text-lg tracking-tight">{alert.clientName}</h4>
@@ -320,8 +493,19 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                                         <td className="px-8 py-5">
                                             <div className="flex flex-col">
                                                 <span className="text-xs font-bold text-slate-700">{payment.packageName || payment.taskName || 'N/A'}</span>
-                                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 flex items-center gap-2">
                                                     {payment.type === 'package' ? '📦 Package' : '📄 Standalone'}
+                                                    {payment.department ? (
+                                                        <span className="flex items-center gap-2">
+                                                            <span className="text-slate-200 text-[8px]">•</span>
+                                                            <span className="text-blue-500">{payment.department}</span>
+                                                        </span>
+                                                    ) : (
+                                                        <span className="flex items-center gap-2">
+                                                            <span className="text-slate-200 text-[8px]">•</span>
+                                                            <span className="text-amber-500">Old Record</span>
+                                                        </span>
+                                                    )}
                                                 </span>
                                             </div>
                                         </td>
@@ -369,6 +553,149 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                     </div>
                 </div>
             )}
+
+            {/* Finance Tab */}
+            {activeTab === 'finance' && (
+                <div className="space-y-6 animate-in fade-in duration-500">
+                    {financeData.length === 0 ? (
+                        <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl py-24 text-center">
+                            <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <PieChart size={32} className="text-blue-400" />
+                            </div>
+                            <p className="font-black text-xs uppercase tracking-[0.3em] text-slate-400">No finance records</p>
+                            <p className="text-[10px] text-slate-300 mt-2 font-medium">Earn some revenue to see data here!</p>
+                        </div>
+                    ) : (
+                        financeData.map((data) => (
+                            <div key={data.label} className="bg-white rounded-[2rem] border border-slate-100 shadow-xl overflow-hidden mb-6">
+                                <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                                    <h3 className="font-black text-slate-900 text-xl tracking-tight">{data.label}</h3>
+                                    <button
+                                        onClick={() => generateMonthlyReportPDF(data.label, data.payments, data.total, data.design, data.dev)}
+                                        className="flex items-center gap-2 px-5 py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 border border-blue-100"
+                                    >
+                                        <Download size={14} strokeWidth={2.5} />
+                                        Download Report
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                                    <div className="p-8 text-center flex flex-col items-center justify-center bg-blue-50/30">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Revenue</span>
+                                        <span className="text-4xl font-black text-blue-600">₹{data.total.toLocaleString()}</span>
+                                        <span className="text-[10px] text-slate-400 font-bold mt-2">100% Volume</span>
+                                    </div>
+                                    <div className="p-8 text-center flex flex-col items-center justify-center group hover:bg-purple-50/50 transition-colors">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Graphic Designing</span>
+                                        <span className="text-3xl font-black text-purple-600 group-hover:scale-105 transition-transform">₹{data.design.toLocaleString()}</span>
+                                        <span className="text-[10px] text-slate-400 font-bold mt-2">
+                                            {data.total > 0 ? Math.round((data.design / data.total) * 100) : 0}% of Total
+                                        </span>
+                                    </div>
+                                    <div className="p-8 text-center flex flex-col items-center justify-center group hover:bg-emerald-50/50 transition-colors">
+                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Web Development</span>
+                                        <span className="text-3xl font-black text-emerald-600 group-hover:scale-105 transition-transform">₹{data.dev.toLocaleString()}</span>
+                                        <span className="text-[10px] text-slate-400 font-bold mt-2">
+                                            {data.total > 0 ? Math.round((data.dev / data.total) * 100) : 0}% of Total
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            )}
+
+            {/* Analytics Tab */}
+            {activeTab === 'analytics' && (
+                <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden p-8 animate-in fade-in zoom-in-95 duration-500">
+                    <div className="flex justify-between items-center mb-8">
+                        <div>
+                            <h3 className="font-black text-slate-900 text-2xl tracking-tight">Revenue Trends</h3>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">12-Month Performance Trajectory</p>
+                        </div>
+                        <div className="relative">
+                            <select
+                                value={selectedYear}
+                                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                className="appearance-none bg-slate-50 border border-slate-200 text-slate-700 font-black text-xs px-6 py-3 pr-10 rounded-xl outline-none focus:border-indigo-500 cursor-pointer"
+                            >
+                                {availableYears.map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" strokeWidth={3} />
+                        </div>
+                    </div>
+
+                    <div className="h-[400px] w-full mt-4">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={getAnalyticsData(selectedYear)} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis
+                                    dataKey="name"
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tick={{ fontSize: 10, fontWeight: 800, fill: '#94a3b8' }}
+                                    dy={10}
+                                />
+                                <YAxis
+                                    axisLine={false}
+                                    tickLine={false}
+                                    tick={{ fontSize: 10, fontWeight: 800, fill: '#94a3b8' }}
+                                    tickFormatter={(val) => `₹${val.toLocaleString()}`}
+                                />
+                                <Tooltip
+                                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)', fontWeight: 'bold' }}
+                                    formatter={(value: number) => [`₹${value.toLocaleString()}`, '']}
+                                    labelStyle={{ color: '#0f172a', fontWeight: 900, marginBottom: '0.5rem' }}
+                                />
+                                <Legend
+                                    iconType="circle"
+                                    wrapperStyle={{ fontSize: '11px', fontWeight: 800, paddingTop: '20px' }}
+                                />
+                                <Line
+                                    type="monotone"
+                                    dataKey="Trend"
+                                    name="Projected Trend"
+                                    stroke="#cbd5e1"
+                                    strokeWidth={2}
+                                    strokeDasharray="5 5"
+                                    dot={false}
+                                    activeDot={false}
+                                />
+                                <Line
+                                    type="monotone"
+                                    connectNulls={false}
+                                    dataKey="Total"
+                                    stroke="#3b82f6"
+                                    strokeWidth={4}
+                                    dot={{ r: 4, strokeWidth: 2 }}
+                                    activeDot={{ r: 6, strokeWidth: 0 }}
+                                />
+                                <Line
+                                    type="monotone"
+                                    connectNulls={false}
+                                    dataKey="Design"
+                                    name="Graphic Designing"
+                                    stroke="#a855f7"
+                                    strokeWidth={3}
+                                    dot={{ r: 3, strokeWidth: 2 }}
+                                />
+                                <Line
+                                    type="monotone"
+                                    connectNulls={false}
+                                    dataKey="Development"
+                                    name="Web Development"
+                                    stroke="#10b981"
+                                    strokeWidth={3}
+                                    dot={{ r: 3, strokeWidth: 2 }}
+                                />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+
             {/* Delete Confirmation Modal */}
             {alertToDelete && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">

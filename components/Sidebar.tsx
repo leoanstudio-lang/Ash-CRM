@@ -8,10 +8,10 @@ interface SidebarProps {
   activeSection: Section;
   onSectionChange: (section: Section) => void;
   onLogout: () => void;
-  activeAlertCount?: number;
+  counts?: Record<string, number>;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeSection, onSectionChange, onLogout, activeAlertCount = 0 }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeSection, onSectionChange, onLogout, counts = {} }) => {
   return (
     <aside className="w-64 bg-[#0f172a] text-slate-300 flex flex-col border-r border-slate-800/50 shadow-xl h-full">
       <div className="p-6">
@@ -40,9 +40,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, onSectionChange, onLog
                 }`}>
                 {item.label}
               </span>
-              {item.id === 'Payments' && activeAlertCount > 0 && (
+              {counts && counts[item.id] > 0 && (
                 <span className="ml-auto bg-red-500 text-white text-[10px] font-black min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center animate-pulse shadow-lg shadow-red-500/30">
-                  {activeAlertCount}
+                  {counts[item.id]}
                 </span>
               )}
             </button>

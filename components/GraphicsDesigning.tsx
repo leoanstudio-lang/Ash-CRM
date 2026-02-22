@@ -227,7 +227,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
             status: 'received',
             triggeredAt: new Date().toISOString(),
             resolvedAt: new Date().toISOString(),
-            type: 'package'
+            type: 'package', department: 'Graphics Designing'
           });
         } else if (m.triggerAtQuantity === 0) {
           // Non-advance but triggers at start = due immediately
@@ -240,7 +240,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
             amount: pm.amountDue,
             status: 'due',
             triggeredAt: new Date().toISOString(),
-            type: 'package'
+            type: 'package', department: 'Graphics Designing'
           });
         }
       }
@@ -1749,7 +1749,28 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                           receivedAmount: Number(newTask.advance) || 0, description: newTask.description || '',
                           status: 'Allocated', progress: 0, assignedEmployeeId: newTask.assignedEmployeeId, createdAt: new Date().toISOString()
                         };
-                        await addProjectToDB(projectToAdd);
+                        const newProjectId = await addProjectToDB(projectToAdd);
+
+                        // Trigger advance payment alert for standalone design tasks
+                        if (Number(newTask.advance) > 0) {
+                          try {
+                            await addPaymentAlertToDB({
+                              clientId: newTask.clientId!,
+                              clientName: client?.name || 'Unknown Client',
+                              projectId: newProjectId, // This requires changing addProjectToDB to return the ID, or we fetch it/use PENDING
+                              taskName: service?.name || 'Graphic Design',
+                              milestoneLabel: 'Advance',
+                              amount: Number(newTask.advance),
+                              status: 'received',
+                              triggeredAt: new Date().toISOString(),
+                              resolvedAt: new Date().toISOString(),
+                              type: 'standalone', department: 'Graphics Designing'
+                            });
+                          } catch (err) {
+                            console.error('Error creating standalone advance payment record:', err);
+                          }
+                        }
+
                         closeBulkModal();
                       }}
                       className="w-full py-3 bg-indigo-600 text-white font-black rounded-xl shadow-lg hover:bg-indigo-700 active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-xs shadow-indigo-600/20">

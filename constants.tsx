@@ -13,12 +13,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Wallet
+  Wallet,
+  FileText
 } from 'lucide-react';
 import { Section } from './types';
 
 export const SIDEBAR_ITEMS = [
   { id: 'Dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
+  { id: 'Quotations', label: 'Quotations', icon: <FileText size={20} /> },
   { id: 'Development', label: 'Development', icon: <Code2 size={20} /> },
   { id: 'Graphics Designing', label: 'Graphics Designing', icon: <Palette size={20} /> },
   { id: 'Sales CRM', label: 'Sales CRM', icon: <Users size={20} /> },

@@ -53,29 +53,54 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
 
     const updates: Partial<Project> = { status: newStatus };
 
-    // If status is finished, the amount is automatically treated as received
+    // If status is finished, the work is done. We need to alert the admin to collect the remaining payment.
     if (newStatus === 'Finished') {
-      updates.receivedAmount = project.totalAmount;
       updates.progress = 100;
       updates.completedAt = new Date().toISOString(); // Track completion time
 
-      // If standalone task (no package), create a RECEIVED payment record
+      // If standalone task (no package), calculate remaining balance and create a DUE payment alert
       if (!project.packageId) {
+        const balance = (project.totalAmount || 0) - (project.advance || 0);
+        if (balance > 0) {
+          try {
+            await addPaymentAlertToDB({
+              clientId: project.clientId,
+              clientName: project.clientName || 'Unknown Client',
+              projectId: project.id,
+              taskName: project.serviceName,
+              milestoneLabel: 'Final Balance',
+              amount: balance,
+              status: 'due',
+              triggeredAt: new Date().toISOString(),
+              type: 'standalone',
+              department: 'Graphics Designing'
+            });
+          } catch (err) {
+            console.error('Error creating standalone final balance payment alert:', err);
+          }
+        }
+      }
+    }
+
+    // If standalone task is set to Waiting, the work is done but pending final client payment
+    if (newStatus === 'Waiting' && !project.packageId) {
+      const balanceAmount = (project.totalAmount || 0) - (project.advance || 0);
+
+      if (balanceAmount > 0) {
         try {
           await addPaymentAlertToDB({
             clientId: project.clientId,
             clientName: project.clientName || 'Unknown Client',
             projectId: project.id,
             taskName: project.serviceName,
-            milestoneLabel: 'Full Payment',
-            amount: project.totalAmount,
-            status: 'received',
+            milestoneLabel: 'Final Balance', // Descriptive tag representing pending revenue for the independent work
+            amount: balanceAmount,
+            status: 'due',
             triggeredAt: new Date().toISOString(),
-            resolvedAt: new Date().toISOString(),
-            type: 'standalone'
+            type: 'standalone', department: 'Graphics Designing'
           });
         } catch (err) {
-          console.error('Error creating standalone payment record:', err);
+          console.error('Error creating standalone waiting payment alert:', err);
         }
       }
     }
@@ -135,7 +160,7 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                 amount: ms.amountDue,
                 status: 'due',
                 triggeredAt: new Date().toISOString(),
-                type: 'package'
+                type: 'package', department: 'Graphics Designing'
               });
             }
           }

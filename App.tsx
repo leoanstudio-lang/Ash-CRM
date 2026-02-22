@@ -13,8 +13,10 @@ import Login from './components/Login';
 import EmployeePanel from './components/EmployeePanel';
 import History from './components/History';
 import Payments from './components/Payments';
+import QuotationsView from './components/Quotations';
 import { Bell } from 'lucide-react';
 import { subscribeToCollection } from './lib/db';
+import { Quotation } from './types';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
@@ -29,6 +31,7 @@ const App: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([]);
+  const [quotations, setQuotations] = useState<Quotation[]>([]);
 
   // Firestore Subscriptions
   useEffect(() => {
@@ -39,6 +42,7 @@ const App: React.FC = () => {
     const unsubServices = subscribeToCollection<Service>('services', setServices);
     const unsubPackages = subscribeToCollection<Package>('packages', setPackages);
     const unsubPaymentAlerts = subscribeToCollection<PaymentAlert>('paymentAlerts', setPaymentAlerts);
+    const unsubQuotations = subscribeToCollection<Quotation>('quotations', setQuotations);
 
     return () => {
       unsubClients();
@@ -48,6 +52,7 @@ const App: React.FC = () => {
       unsubServices();
       unsubPackages();
       unsubPaymentAlerts();
+      unsubQuotations();
     };
   }, []);
 
@@ -100,6 +105,7 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (activeSection) {
       case 'Dashboard': return <Dashboard clients={clients} projects={projects} leads={leads} />;
+      case 'Quotations': return <QuotationsView clients={clients} services={services} />;
       case 'Development': return <Development clients={clients} projects={projects} setProjects={setProjects} services={services} />;
       case 'Graphics Designing': return <GraphicsDesigning employees={employees} projects={projects} setProjects={setProjects} clients={clients} services={services} packages={packages} paymentAlerts={paymentAlerts} />;
       case 'Sales CRM': return <SalesCRM leads={leads} setLeads={setLeads} setClients={setClients} services={services} />;
@@ -110,6 +116,16 @@ const App: React.FC = () => {
       case 'Settings': return <Settings employees={employees} setEmployees={setEmployees} services={services} setServices={setServices} onLogout={handleLogout} />;
       default: return <Dashboard clients={clients} projects={projects} leads={leads} />;
     }
+  };
+
+  // Sidebar dynamic counts
+  const counts = {
+    Payments: paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting').length,
+    Quotations: quotations.filter(q => q.status === 'Draft' || q.status === 'Sent').length,
+    'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
+    'Graphics Designing': projects.filter(p => p.type === 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
+    'Client DB': clients.length,
+    Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length
   };
 
   return (
@@ -132,7 +148,7 @@ const App: React.FC = () => {
             setIsMobileSidebarOpen(false);
           }}
           onLogout={handleLogout}
-          activeAlertCount={paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending').length}
+          counts={counts}
         />
       </div>
 

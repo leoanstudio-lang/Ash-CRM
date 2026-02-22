@@ -13,7 +13,7 @@ import {
     Timestamp
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Project, Client, Lead, Employee, Service, Package, PaymentAlert, CompanyProfile } from "../types";
+import { Project, Client, Lead, Employee, Service, Package, PaymentAlert, CompanyProfile, Quotation } from "../types";
 
 // --- Generic Helpers ---
 
@@ -254,5 +254,33 @@ export const saveCompanyProfile = async (profile: CompanyProfile) => {
         console.log('Company Profile successfully saved!');
     } catch (error) {
         console.error('Error saving company profile:', error);
+    }
+};
+
+// --- Quotations ---
+
+export const addQuotationToDB = async (quotation: Omit<Quotation, 'id'>) => {
+    try {
+        const docRef = await addDoc(collection(db, "quotations"), quotation);
+        return docRef.id;
+    } catch (e) {
+        console.error("Error adding quotation: ", e);
+    }
+};
+
+export const updateQuotationInDB = async (id: string, updates: Partial<Quotation>) => {
+    try {
+        const docRef = doc(db, "quotations", id);
+        await updateDoc(docRef, updates);
+    } catch (e) {
+        console.error("Error updating quotation: ", e);
+    }
+};
+
+export const deleteQuotationFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "quotations", id));
+    } catch (e) {
+        console.error("Error deleting quotation: ", e);
     }
 };

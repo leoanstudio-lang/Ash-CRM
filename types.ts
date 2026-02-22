@@ -1,5 +1,5 @@
 
-export type Section = 'Dashboard' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments';
+export type Section = 'Dashboard' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments';
 export type Role = 'admin' | 'employee';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
@@ -122,6 +122,7 @@ export interface PaymentAlert {
   triggeredAt: string;
   resolvedAt?: string;
   type: 'package' | 'standalone'; // distinguish package vs standalone payments
+  department?: string; // e.g. 'Development' or 'Graphics Designing'
 }
 
 export interface DynamicField {
@@ -136,4 +137,33 @@ export interface CompanyProfile {
   logoUrl?: string;
   contacts: DynamicField[];
   socials: DynamicField[];
+}
+
+// --- Quotation Management Types ---
+
+export interface QuotationItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+export interface Quotation {
+  id: string;
+  quotationNumber: string; // e.g. QTN-2026-001
+  issueDate: string;
+  validityDate: string;
+  clientId?: string; // Optional: if existing client
+  clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientAddress?: string; // Optional "To" address
+  items: QuotationItem[];
+  subtotal: number;
+  discount?: number;
+  totalAmount: number;
+  termsAndConditions: string;
+  status: 'Draft' | 'Sent' | 'Approved' | 'Rejected';
+  createdAt: string;
+  isNewClient: boolean;
 }

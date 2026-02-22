@@ -85,23 +85,63 @@ const Development: React.FC<DevelopmentProps> = ({ clients, projects, services =
       await addProjectToDB(projectToAdd);
     }
 
-    // Check if status is Completed/Closed - trigger payment history
-    if (projectForm.status === 'Completed' || projectForm.status === 'Closed') {
+    // Check if status is Completed/Closed/Waiting Client Feedback - trigger payment history FOR BALANCE
+    if (!editingProject && Number(projectForm.advance) > 0) {
+      // NEW PROJECT: Only log the advance as received
       try {
         await addPaymentAlertToDB({
-          clientId: projectForm.clientId || editingProject?.clientId || '',
-          clientName: client?.name || editingProject?.clientName || 'Unknown Client',
-          projectId: editingProject?.id, // Might be undefined for new projects, but usually we track completions on edit
-          taskName: projectForm.serviceName || (editingProject?.serviceName) || (projectForm.type === 'Web' ? 'Web Development' : 'Mobile App'),
-          milestoneLabel: 'Project Completion',
-          amount: Number(projectForm.totalAmount) || 0,
+          clientId: projectForm.clientId || '',
+          clientName: client?.name || 'Unknown Client',
+          projectId: 'PENDING_ID', // Replaced if needed, but usually fine for immediate standalone
+          taskName: projectForm.serviceName || (projectForm.type === 'Web' ? 'Web Development' : 'Mobile App'),
+          milestoneLabel: 'Advance',
+          amount: Number(projectForm.advance),
           status: 'received',
           triggeredAt: new Date().toISOString(),
           resolvedAt: new Date().toISOString(),
-          type: 'standalone'
+          type: 'standalone', department: 'Development'
         });
       } catch (err) {
-        console.error('Error creating development payment record:', err);
+        console.error('Error creating advance payment record:', err);
+      }
+    } else if (editingProject && (projectForm.status === 'Completed' || projectForm.status === 'Closed' || projectForm.status === 'Waiting Client Feedback')) {
+      // EXISTING PROJECT COMPLETED: Log only the remaining balance
+      const balance = (Number(projectForm.totalAmount) || 0) - (Number(projectForm.advance) || 0);
+      if (balance > 0) {
+        try {
+          await addPaymentAlertToDB({
+            clientId: projectForm.clientId || editingProject?.clientId || '',
+            clientName: client?.name || editingProject?.clientName || 'Unknown Client',
+            projectId: editingProject?.id,
+            taskName: projectForm.serviceName || (editingProject?.serviceName) || (projectForm.type === 'Web' ? 'Web Development' : 'Mobile App'),
+            milestoneLabel: 'Final Balance',
+            amount: balance,
+            status: 'due',
+            triggeredAt: new Date().toISOString(),
+            type: 'standalone', department: 'Development'
+          });
+        } catch (err) {
+          console.error('Error creating development balance payment record:', err);
+        }
+      }
+    } else if (projectForm.status === 'Waiting' || projectForm.status === 'Waiting for Mani') {
+      const balance = (Number(projectForm.totalAmount) || 0) - (Number(projectForm.advance) || 0);
+      if (balance > 0) {
+        try {
+          await addPaymentAlertToDB({
+            clientId: projectForm.clientId || editingProject?.clientId || '',
+            clientName: client?.name || editingProject?.clientName || 'Unknown Client',
+            projectId: editingProject?.id,
+            taskName: projectForm.serviceName || (editingProject?.serviceName) || (projectForm.type === 'Web' ? 'Web Development' : 'Mobile App'),
+            milestoneLabel: 'Final Balance',
+            amount: balance,
+            status: 'due',
+            triggeredAt: new Date().toISOString(),
+            type: 'standalone', department: 'Development'
+          });
+        } catch (err) {
+          console.error('Error creating development waiting payment record:', err);
+        }
       }
     }
 
@@ -137,27 +177,52 @@ const Development: React.FC<DevelopmentProps> = ({ clients, projects, services =
 
   const updateProjectStatus = async (projectId: string, status: string) => {
     const updates: any = { status };
-    if (status === 'Completed' || status === 'Closed') {
+    if (status === 'Completed' || status === 'Closed' || status === 'Waiting Client Feedback') {
       updates.completedAt = new Date().toISOString();
 
-      // Trigger payment alert
+      // Trigger payment alert for the BALANCE
       const project = projects.find(p => p.id === projectId);
       if (project) {
-        try {
-          await addPaymentAlertToDB({
-            clientId: project.clientId,
-            clientName: project.clientName || 'Unknown Client',
-            projectId: project.id,
-            taskName: project.serviceName || project.type + ' Solution',
-            milestoneLabel: 'Project Completion',
-            amount: project.totalAmount,
-            status: 'received',
-            triggeredAt: new Date().toISOString(),
-            resolvedAt: new Date().toISOString(),
-            type: 'standalone'
-          });
-        } catch (err) {
-          console.error('Error creating development payment record:', err);
+        const balance = (project.totalAmount || 0) - (project.advance || 0);
+        if (balance > 0) {
+          try {
+            await addPaymentAlertToDB({
+              clientId: project.clientId,
+              clientName: project.clientName || 'Unknown Client',
+              projectId: project.id,
+              taskName: project.serviceName || project.type + ' Solution',
+              milestoneLabel: 'Final Balance',
+              amount: balance,
+              status: 'due',
+              triggeredAt: new Date().toISOString(),
+              type: 'standalone', department: 'Development'
+            });
+          } catch (err) {
+            console.error('Error creating development balance payment record:', err);
+          }
+        }
+      }
+    } else if (status === 'Waiting' || status === 'Waiting for Mani') {
+      // Trigger waiting due payment alert
+      const project = projects.find(p => p.id === projectId);
+      if (project) {
+        const balance = (project.totalAmount || 0) - (project.advance || 0);
+        if (balance > 0) {
+          try {
+            await addPaymentAlertToDB({
+              clientId: project.clientId,
+              clientName: project.clientName || 'Unknown Client',
+              projectId: project.id,
+              taskName: project.serviceName || project.type + ' Solution',
+              milestoneLabel: 'Final Balance',
+              amount: balance,
+              status: 'due',
+              triggeredAt: new Date().toISOString(),
+              type: 'standalone', department: 'Development'
+            });
+          } catch (err) {
+            console.error('Error creating development waiting payment record:', err);
+          }
         }
       }
     }
