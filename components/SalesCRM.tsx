@@ -1,792 +1,134 @@
-
-import React, { useState, useEffect } from 'react';
-import { Lead, Client, Service } from '../types';
-import {
-  Search, Plus, Calendar, Mail, Phone, Clock,
-  AlertCircle, TrendingUp, CheckCircle2, UserPlus,
-  Edit3, History, MessageSquare, ArrowRight, Filter,
-  ChevronDown, SlidersHorizontal, DollarSign, X, Trash2, Eye
-} from 'lucide-react';
-import { addLeadToDB, updateLeadInDB, deleteLeadFromDB, addClientToDB } from '../lib/db';
+import React, { useState } from 'react';
+import { Lead, Client, Service, Campaign, Channel } from '../types';
+import SalesDashboard from './SalesDashboard';
+import SalesInbound from './SalesInbound';
+import SalesOutbound from './SalesOutbound';
 
 interface SalesCRMProps {
-  leads: Lead[];
-  setLeads?: React.Dispatch<React.SetStateAction<Lead[]>>; // Optional/Deprecated
-  setClients?: React.Dispatch<React.SetStateAction<Client[]>>; // Optional/Deprecated
-  services: Service[];
+    leads: Lead[];
+    setLeads?: React.Dispatch<React.SetStateAction<Lead[]>>;
+    setClients?: React.Dispatch<React.SetStateAction<Client[]>>;
+    services: Service[];
+    campaigns?: Campaign[];
+
+    // Outbound Engine Data
+    campaignProspects?: any[];
+    activeDeals?: any[];
+    nurturingLeads?: any[];
+    noResponseLeads?: any[];
+    suppressedLeads?: any[];
+    channels: Channel[];
+
+    // Inbound Engine Data
+    inboundSources?: any[];
+    inboundLeads?: any[];
+    inboundActiveDeals?: any[];
+    inboundNurturing?: any[];
+    inboundNoResponseLeads?: any[];
+    inboundSuppressedLeads?: any[];
+
+    // Auto-open logic
+    autoOpenProspectId?: string | null;
+    autoOpenTab?: 'dashboard' | 'inbound' | 'outbound';
+    onClearAutoOpen?: () => void;
 }
 
-const SalesCRM: React.FC<SalesCRMProps> = ({ leads, services }) => {
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+const SalesCRM: React.FC<SalesCRMProps> = ({
+    leads, setLeads, setClients, services, campaigns,
+    campaignProspects, activeDeals, nurturingLeads, noResponseLeads, suppressedLeads, channels,
+    inboundSources, inboundLeads, inboundActiveDeals, inboundNurturing, inboundNoResponseLeads, inboundSuppressedLeads,
+    autoOpenProspectId, autoOpenTab, onClearAutoOpen
+}) => {
+    const [activeTab, setActiveTab] = React.useState<'dashboard' | 'inbound' | 'outbound'>(autoOpenTab || 'dashboard');
 
-  // Persistent State
-  const [searchTerm, setSearchTerm] = useState(() => localStorage.getItem('sales_search') || '');
-  const [filterToday, setFilterToday] = useState(() => localStorage.getItem('sales_filter_today') === 'true');
-
-  // Advanced Filters
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterSource, setFilterSource] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterValueMin, setFilterValueMin] = useState('');
-  const [filterValueMax, setFilterValueMax] = useState('');
-  const [filterDateStart, setFilterDateStart] = useState('');
-  const [filterDateEnd, setFilterDateEnd] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Cold' | 'Warm' | 'Hot' | 'Lead Today' | 'Lost'>('All');
-  const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
-
-  const [leadForm, setLeadForm] = useState<Partial<Lead>>({
-    name: '',
-    mobile: '',
-    email: '',
-    projectName: '',
-    nextFollowUp: '',
-    status: 'Cold',
-    description: '',
-    source: '',
-    value: 0
-  });
-
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  // Save filters to localStorage
-  useEffect(() => {
-    localStorage.setItem('sales_search', searchTerm);
-    localStorage.setItem('sales_filter_today', filterToday.toString());
-  }, [searchTerm, filterToday]);
-
-  // Google Contacts Integration
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
-  const [pendingLead, setPendingLead] = useState<any | null>(null);
-
-  useEffect(() => {
-    // Initialize Google Client
-    import('../lib/googleContacts').then(({ initGoogleClient }) => {
-      initGoogleClient((token) => {
-        setGoogleToken(token);
-      });
-    });
-  }, []);
-
-  // Watch for token update to process pending lead
-  useEffect(() => {
-    if (googleToken && pendingLead) {
-      // For pending leads, we already added them to DB without ID. 
-      // We need to sync, get ID, and then UPDATE the lead in DB with the ID.
-      // But pendingLead as saved in state might not have the Firebase ID if it was "leadToAdd". 
-      // Actually, addLeadToDB returns the ref, but we didn't capture it in the pending flow potentially?
-      // Let's check handleSaveLead logic. 
-      // We called addLeadToDB(leadToAdd). We didn't get the ID back to pendingLead.
-      // We need to fetch the latest leads or just wait for the user to refresh? 
-      // Better: In handleSaveLead, we should capture the ID generated by addLeadToDB if we are pending.
-      // But addLeadToDB is void/async in current usage? We need to verify db.ts. 
-      // Assuming we can't easily get the ID of the just-added lead without refactoring db.ts or using a custom ID.
-      // However, we can try to find the lead by some unique field or just skip saving the ID for "pending" ones for now (MVP).
-      // User request: "Update... not duplicate". This implies saving ID is critical.
-      // Strategy: When pending, we sync. We might fail to save the ID back to DB if we don't have the Lead ID.
-      // Let's modify handleSaveLead to wait for DB add, then setPendingLead with the ID?
-
-      syncToGoogle(googleToken, pendingLead);
-      setPendingLead(null);
-    }
-  }, [googleToken, pendingLead]);
-
-  const confirmDelete = async () => {
-    if (leadToDelete) {
-      await deleteLeadFromDB(leadToDelete.id);
-
-      // Delete from Google Contacts if linked and token available
-      if (googleToken && leadToDelete.googleResourceName) {
-        import('../lib/googleContacts').then(async ({ deleteGoogleContact }) => {
-          try {
-            await deleteGoogleContact(googleToken, leadToDelete.googleResourceName!);
-            console.log('Deleted from Google Contacts');
-          } catch (error) {
-            console.error('Failed to delete from Google Contacts', error);
-          }
-        });
-      }
-      setLeadToDelete(null);
-    }
-  };
-
-  const syncToGoogle = (token: string, lead: any, dbLeadId?: string) => {
-    import('../lib/googleContacts').then(async ({ saveContactToGoogle }) => {
-      try {
-        const resourceName = await saveContactToGoogle(token, {
-          firstName: lead.name,
-          email: lead.email,
-          phone: lead.mobile,
-          company: lead.projectName,
-          jobTitle: 'Prospect'
-        });
-        console.log('Synced to Google Contacts:', resourceName);
-
-        // If we have a DB ID, update the lead with the Google Resource Name
-        if (dbLeadId) {
-          await updateLeadInDB(dbLeadId, { googleResourceName: resourceName });
+    React.useEffect(() => {
+        if (autoOpenTab) {
+            setActiveTab(autoOpenTab);
         }
-      } catch (error) {
-        console.error('Failed to sync to Google Contacts', error);
-        alert('Lead saved to CRM, but failed to sync to Google Contacts.');
-      }
-    });
-  };
+    }, [autoOpenTab]);
 
-  const handleSaveLead = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingLead) {
-      const updated = { ...editingLead, ...leadForm } as Lead;
-      if (updated.status === 'Closed' && editingLead.status !== 'Closed') {
-        await convertToClient(updated);
-      }
-
-      // Update in DB
-      await updateLeadInDB(editingLead.id, leadForm);
-
-      // Update in Google Contacts if enabled
-      if (googleToken) {
-        import('../lib/googleContacts').then(async ({ updateGoogleContact, searchContactByPhone }) => {
-          try {
-            let resourceName = editingLead.googleResourceName;
-
-            // Fallback: If no ID, search by phone
-            if (!resourceName && leadForm.mobile) {
-              console.log('Searching Google Contact by phone:', leadForm.mobile);
-              resourceName = await searchContactByPhone(googleToken, leadForm.mobile);
-
-              // If found, save the ID to DB for future
-              if (resourceName) {
-                console.log('Found Google Contact:', resourceName);
-                await updateLeadInDB(editingLead.id, { googleResourceName: resourceName });
-              }
-            }
-
-            if (resourceName) {
-              await updateGoogleContact(googleToken, resourceName, {
-                firstName: leadForm.name!,
-                email: leadForm.email,
-                phone: leadForm.mobile,
-                company: leadForm.projectName,
-                jobTitle: 'Prospect'
-              });
-              console.log('Updated Google Contact');
-            } else {
-              console.log('No matching Google Contact found to update.');
-            }
-          } catch (error) {
-            console.error('Failed to update Google Contact', error);
-          }
-        });
-      }
-
-    } else {
-      const leadToAdd: any = {
-        name: leadForm.name!,
-        mobile: leadForm.mobile!,
-        email: leadForm.email!,
-        projectName: leadForm.projectName!,
-        nextFollowUp: leadForm.nextFollowUp!,
-        status: leadForm.status as any,
-        description: leadForm.description || '',
-        source: leadForm.source || 'Other Outreach',
-        value: Number(leadForm.value) || 0,
-        dateAdded: todayStr
-      };
-
-      if (leadToAdd.status === 'Closed') {
-        const tempLead = { ...leadToAdd, id: `TEMP_${Date.now()}` };
-        await convertToClient(tempLead);
-      }
-
-      // We need the DB ID to save the Google Resource Name later
-      // Modify addLeadToDB to return the ref? It's imported.
-      // For now, we'll assume we can't easily get the ID synchronously without changing db.ts.
-      // Workaround: Generate ID client-side or use a less robust method? 
-      // OR: We define the ID here. Firestore allows `doc(collection, id)`.
-      // Let's rely on standard logic. If we can't get ID, we can't save resourceName for pending leads easily.
-      // BUT if we are LOGGED IN (most common case), we can sync FIRST, get resourceName, THEN add to DB.
-
-      if (googleToken) {
-        // SYNC FIRST
-        import('../lib/googleContacts').then(async ({ saveContactToGoogle }) => {
-          try {
-            const resourceName = await saveContactToGoogle(googleToken, {
-              firstName: leadToAdd.name,
-              email: leadToAdd.email,
-              phone: leadToAdd.mobile,
-              company: leadToAdd.projectName,
-              jobTitle: 'Prospect'
-            });
-            // Add to DB WITH resourceName
-            await addLeadToDB({ ...leadToAdd, googleResourceName: resourceName });
-            console.log('Synced and Saved with ID');
-          } catch (err) {
-            console.error(err);
-            await addLeadToDB(leadToAdd); // Fallback
-            alert('Saved to CRM, but failed to sync to Google.');
-          }
-        });
-      } else {
-        // Token missing, add to DB first (no resourceName yet)
-        // We can't easily update it later without the ID.
-        // Trigger auth.
-        // Note: This corner case (logged out -> add lead) means the FIRST lead might not be updatable later 
-        // unless we do a manual lookup or complex logic.
-        // Acceptance: "Next time... duplicate". User wants update.
-        // We can try to accept this limitation for the very first lead, or try to implement robust finding.
-        // Or just save to DB.
-        await addLeadToDB(leadToAdd);
-        setPendingLead(leadToAdd); // This pending lead won't verify ID back to DB. 
-        import('../lib/googleContacts').then(({ requestGoogleToken }) => {
-          requestGoogleToken();
-        });
-      }
-    }
-
-    setShowAddModal(false);
-    setShowUpdateModal(false);
-    setEditingLead(null);
-    resetForm();
-  };
-
-  const convertToClient = async (lead: Lead) => {
-    const newClient: any = {
-      name: lead.name,
-      companyName: lead.projectName || 'Prospect Org',
-      mobile: lead.mobile,
-      email: lead.email,
-      serviceEnquired: lead.projectName,
-      dateAdded: todayStr,
-      status: 'Active'
-    };
-    await addClientToDB(newClient);
-  };
-
-  const resetForm = () => {
-    setLeadForm({
-      name: '',
-      mobile: '',
-      email: '',
-      projectName: '',
-      nextFollowUp: '',
-      status: 'Cold',
-      description: '',
-      source: '',
-      value: 0
-    });
-  };
-
-  const openUpdate = (lead: Lead) => {
-    setEditingLead(lead);
-    setLeadForm({ ...lead });
-    setShowUpdateModal(true);
-  };
-
-  // ACTIVE LEADS FILTER (Hides 'Closed' so they disappear once converted. Lost leads remain visible but distinct)
-  const filteredLeads = leads.filter(l => {
-    const isNotClosed = l.status !== 'Closed';
-    // 'Lost' leads are generally kept visible in the main list unless filtered out, or we could add a specific toggle.
-    // User request: "show that lead is losted". So we keep them.
-
-    const matchesSearch = l.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      l.projectName.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesToday = filterToday ? l.nextFollowUp === todayStr : true;
-
-    // Advanced Filters
-    const matchesSource = filterSource ? l.source === filterSource : true;
-    const matchesStatus = filterStatus ? l.status === filterStatus : true;
-    const val = l.value || 0;
-    const matchesValue = (filterValueMin ? val >= Number(filterValueMin) : true) &&
-      (filterValueMax ? val <= Number(filterValueMax) : true);
-
-    // Date Added Filter
-    const dAdded = l.dateAdded || '';
-    const matchesDate = (filterDateStart ? dAdded >= filterDateStart : true) &&
-      (filterDateEnd ? dAdded <= filterDateEnd : true);
-
-    return isNotClosed && matchesSearch && matchesToday && matchesSource && matchesStatus && matchesValue && matchesDate;
-  });
-
-  const totalPipelineValue = leads.filter(l => l.status !== 'Closed').reduce((sum, l) => sum + (l.value || 0), 0);
-
-  return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Sales Dashboard Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white px-5 py-4 rounded-[1.5rem] border border-slate-100 shadow-sm relative group overflow-hidden">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 border border-indigo-100"><UserPlus size={16} /></div>
-            <span className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em]">Lead Pool</span>
-          </div>
-          <p className="text-2xl font-black text-slate-900 tracking-tight">{leads.filter(l => l.status !== 'Closed').length}</p>
-          <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase tracking-wider">Potential Growth</p>
-        </div>
-
-        <button
-          onClick={() => setFilterToday(!filterToday)}
-          className={`px-5 py-4 rounded-[1.5rem] border transition-all duration-300 relative group overflow-hidden text-left ${filterToday
-            ? 'bg-rose-600 text-white border-rose-600 shadow-xl shadow-rose-600/20'
-            : 'bg-white border-slate-100 shadow-sm hover:border-rose-100'
-            }`}
-        >
-          <div className="flex justify-between items-start mb-2">
-            <div className={`p-2 rounded-xl border ${filterToday ? 'bg-white/20 border-white/20 text-white' : 'bg-rose-50 border-rose-100 text-rose-600'}`}>
-              <Clock size={16} className={leads.some(l => l.nextFollowUp === todayStr && l.status !== 'Closed') ? 'animate-pulse' : ''} />
-            </div>
-            <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${filterToday ? 'text-white/60' : 'text-slate-400'}`}>Call List</span>
-          </div>
-          <p className={`text-2xl font-black tracking-tight ${filterToday ? 'text-white' : 'text-slate-900'}`}>
-            {leads.filter(l => l.nextFollowUp === todayStr && l.status !== 'Closed').length}
-          </p>
-          <p className={`text-[9px] mt-1 font-bold uppercase tracking-wider ${filterToday ? 'text-white/80' : 'text-rose-500'}`}>
-            Follow-up Today {filterToday ? '(Active)' : ''}
-          </p>
-        </button>
-
-        <div className="bg-white px-5 py-4 rounded-[1.5rem] border border-slate-100 shadow-sm relative overflow-hidden group hover:border-orange-100 transition-all">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-orange-50 rounded-xl text-orange-600 border border-orange-100"><TrendingUp size={16} /></div>
-            <span className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em]">Hot Pipeline</span>
-          </div>
-          <p className="text-2xl font-black text-slate-900 tracking-tight">{leads.filter(l => l.status === 'Hot').length}</p>
-          <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase tracking-wider">High Probability</p>
-        </div>
-
-        <div className="bg-[#0f172a] px-5 py-4 rounded-[1.5rem] text-white shadow-xl relative overflow-hidden group">
-          <div className="flex justify-between items-start mb-2 relative z-10">
-            <div className="p-2 bg-emerald-500/20 rounded-xl text-emerald-400 border border-emerald-500/20 shadow-inner"><CheckCircle2 size={16} /></div>
-            <span className="text-[9px] font-black uppercase text-slate-500 tracking-[0.2em]">Conversions</span>
-          </div>
-          <p className="text-2xl font-black relative z-10 tracking-tight">{leads.filter(l => l.status === 'Closed').length}</p>
-          <p className="text-[9px] text-slate-400 mt-1 relative z-10 font-bold uppercase tracking-wider">Total Closed Won</p>
-          <div className="absolute -right-5 -bottom-5 w-24 h-24 bg-emerald-600/10 rounded-full blur-2xl group-hover:scale-125 transition-transform duration-700"></div>
-        </div>
-
-        <div className="bg-white px-5 py-4 rounded-[1.5rem] border border-slate-100 shadow-sm relative overflow-hidden group hover:border-indigo-100 transition-all">
-          <div className="flex justify-between items-start mb-2">
-            <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 border border-indigo-100"><DollarSign size={16} /></div>
-            <span className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em]">Pipeline Value</span>
-          </div>
-          <p className="text-2xl font-black text-slate-900 tracking-tight">₹{totalPipelineValue.toLocaleString()}</p>
-          <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase tracking-wider">Total Projected</p>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-4 px-1">
-        <div className="flex flex-col md:flex-row gap-4 items-center">
-          <div className="relative flex-1 group w-full">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={16} />
-            <input
-              type="text"
-              placeholder="Search leads..."
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-[1.5rem] text-sm font-bold outline-none focus:ring-4 focus:ring-indigo-500/5 shadow-sm transition-all"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 no-scrollbar">
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`px-5 py-3 rounded-[1.5rem] flex items-center gap-2 transition-all font-black uppercase tracking-widest text-[10px] border shadow-sm flex-shrink-0 ${showFilters ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-100 hover:bg-slate-50'}`}
-            >
-              <SlidersHorizontal size={16} />
-              Filters
-            </button>
-
-            <button
-              onClick={() => { resetForm(); setEditingLead(null); setShowAddModal(true); }}
-              className="bg-indigo-600 text-white px-6 py-3 rounded-[1.5rem] flex items-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20 font-black uppercase tracking-widest text-[10px] active:scale-95 whitespace-nowrap flex-shrink-0"
-            >
-              <Plus size={16} />
-              New Acquisition
-            </button>
-          </div>
-        </div>
-
-        {showFilters && (
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm animate-in slide-in-from-top-2 duration-300">
-            <div className="flex justify-between items-center mb-4">
-              <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2"><Filter size={14} className="text-indigo-500" /> Detailed Filtering</h4>
-              <button onClick={() => {
-                setFilterSource(''); setFilterStatus(''); setFilterValueMin(''); setFilterValueMax(''); setFilterDateStart(''); setFilterDateEnd('');
-              }} className="text-[10px] font-bold text-rose-500 hover:text-rose-600 uppercase tracking-wider">Reset All</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider ml-1">Acquisition Source</label>
-                <select
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:border-indigo-500"
-                  value={filterSource}
-                  onChange={e => setFilterSource(e.target.value)}
-                >
-                  <option value="">All Sources</option>
-                  {['Meta Ads', 'Google Ads', 'Website', 'Cold Message', 'Cold Call', 'Instagram', 'Facebook', 'YouTube', 'LinkedIn', 'Fever', 'Other Outreach'].map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider ml-1">Lead Status</label>
-                <select
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:border-indigo-500"
-                  value={filterStatus}
-                  onChange={e => setFilterStatus(e.target.value)}
-                >
-                  <option value="">All Statuses</option>
-                  {['Cold', 'Warm', 'Hot', 'Lead Today', 'Lost'].map(s => <option key={s} value={s}>{s === 'Lead Today' ? 'High Priority' : s}</option>)}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider ml-1">Project Value (₹)</label>
-                <div className="flex gap-2">
-                  <input
-                    type="number" placeholder="Min"
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500"
-                    value={filterValueMin}
-                    onChange={e => setFilterValueMin(e.target.value)}
-                  />
-                  <input
-                    type="number" placeholder="Max"
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500"
-                    value={filterValueMax}
-                    onChange={e => setFilterValueMax(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider ml-1">Date Range</label>
-                <div className="flex gap-2">
-                  <input
-                    type="date"
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold outline-none focus:border-indigo-500"
-                    value={filterDateStart}
-                    onChange={e => setFilterDateStart(e.target.value)}
-                  />
-                  <input
-                    type="date"
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold outline-none focus:border-indigo-500"
-                    value={filterDateEnd}
-                    onChange={e => setFilterDateEnd(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center bg-slate-50/20 gap-4">
-          <div className="flex items-center gap-3 w-full md:w-auto">
-            <div className="w-9 h-9 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-md flex-shrink-0"><History size={16} /></div>
-            <div>
-              <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">Sales Log</h3>
-              <p className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] mt-0.5">
-                {filterToday ? "Active Filter: TODAY" : "Prospect Database"}
-              </p>
-            </div>
-          </div>
-          {filterToday && (
-            <button
-              onClick={() => setFilterToday(false)}
-              className="px-3 py-1.5 bg-rose-50 text-rose-600 rounded-lg text-[9px] font-black uppercase tracking-widest border border-rose-100 self-center md:self-auto"
-            >
-              Clear Filter
-            </button>
-          )}
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[900px]">
-            <thead>
-              <tr className="bg-slate-50/50 text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">
-                <th className="px-6 py-4">Prospect Identity</th>
-                <th className="px-6 py-4">Project Intent</th>
-                <th className="px-6 py-4">Status & Follow-up</th>
-                <th className="px-6 py-4">Sentiment</th>
-                <th className="px-6 py-4 text-right">Operations</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filteredLeads.map(lead => (
-                <tr key={lead.id} className="hover:bg-slate-50/80 transition-all duration-300 group">
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-slate-800 text-sm tracking-tight">{lead.name}</span>
-                      <div className="flex items-center gap-3 mt-1">
-                        <span className="text-[9px] text-slate-400 font-bold flex items-center gap-1 uppercase"><Phone size={10} className="text-indigo-400" /> {lead.mobile}</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-xs font-bold text-slate-700 tracking-tight">{lead.projectName}</span>
-                    <div className="flex items-center gap-2 mt-1">
-                      {lead.value && <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">₹{lead.value.toLocaleString()}</span>}
-                      {lead.source && <span className="text-[9px] font-bold text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">{lead.source}</span>}
-                    </div>
-                    <p className="text-[9px] text-slate-400 mt-1 line-clamp-1 italic max-w-xs opacity-70">"{lead.description}"</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className={`p-1.5 rounded-lg ${lead.nextFollowUp === todayStr ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-400'}`}>
-                        <Calendar size={12} />
-                      </div>
-                      <div className="flex flex-col">
-                        <span className={`text-xs font-black ${lead.nextFollowUp === todayStr ? 'text-rose-600' : 'text-slate-700'}`}>
-                          {lead.nextFollowUp === todayStr ? 'Due Today' : lead.nextFollowUp}
-                        </span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider shadow-sm border ${lead.status === 'Hot' ? 'bg-orange-100 text-orange-600 border-orange-200' :
-                      lead.status === 'Warm' ? 'bg-yellow-50 text-yellow-700 border-yellow-100' :
-                        lead.status === 'Lead Today' ? 'bg-rose-100 text-rose-600 border-rose-200' :
-                          lead.status === 'Lost' ? 'bg-red-50 text-red-600 border-red-100' :
-                            lead.status === 'Closed' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'
-                      }`}>
-                      {lead.status === 'Lost' ? 'LOST' : lead.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          setEditingLead(lead);
-                          setLeadForm(lead);
-                          // Don't show modal yet? actually the logic below implies "Operations" column has "LOG"
-                          // But the code below is "Operations"
-                          // This block is actually the "Operations" cell. 
-                          // Wait, looking at the code structure...
-                          // Line 440 is inside the map.
-                          // Let's verify the context.
-                          // This replacement chunk is targeting the button. 
-                          // I'll add the Trash button next to it.
-                          setShowUpdateModal(true);
-                        }}
-                        className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 hover:border-slate-300 transition-all group shadow-sm"
-                      >
-                        <Eye size={14} className="text-slate-400 group-hover:text-blue-600 transition-colors" />
-                        <span className="text-[10px] font-black text-slate-500 group-hover:text-slate-700 uppercase tracking-widest">Log</span>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setLeadToDelete(lead);
-                        }}
-                        className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-red-50 hover:border-red-200 text-slate-300 hover:text-red-500 transition-all shadow-sm"
-                        title="Delete Lead"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredLeads.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-20 text-center text-slate-400">
-                    <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <MessageSquare size={20} className="opacity-20" />
-                    </div>
-                    <p className="font-black text-[10px] uppercase tracking-[0.2em]">No Active Prospects</p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* OPTIMIZED ACQUIRE PROSPECT MODAL */}
-      {(showAddModal || showUpdateModal) && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in duration-300 border border-white/20 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg ${showUpdateModal ? 'bg-indigo-600 shadow-indigo-600/20' : 'bg-blue-600 shadow-blue-600/20'}`}>
-                  {showUpdateModal ? <History size={20} /> : <UserPlus size={20} />}
-                </div>
-                <div>
-                  <h3 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight leading-none">
-                    {showUpdateModal ? 'Update Activity' : 'Acquire Prospect'}
-                  </h3>
-                  <p className="text-slate-400 font-bold text-[9px] mt-1 uppercase tracking-widest opacity-80">
-                    Lead Engagement Lifecycle
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => { setShowAddModal(false); setShowUpdateModal(false); }}
-                className="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center transition-all bg-white border border-slate-100 hover:rotate-90"
-              >
-                <Plus className="rotate-45 text-slate-400" size={20} />
-              </button>
-            </div>
-
-            {/* Form */}
-            <form onSubmit={handleSaveLead} className="p-6 md:p-8 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Full Name</label>
-                  <input
-                    required
-                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all text-sm"
-                    type="text"
-                    placeholder="Enter full name"
-                    value={leadForm.name}
-                    onChange={e => setLeadForm({ ...leadForm, name: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Project Intent</label>
-                  <div className="relative">
-                    <select
-                      required
-                      className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all appearance-none cursor-pointer text-sm pr-10"
-                      value={leadForm.projectName}
-                      onChange={e => setLeadForm({ ...leadForm, projectName: e.target.value })}
-                    >
-                      <option value="">Select Service...</option>
-                      {services.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Acquisition Source</label>
-                  <div className="relative">
-                    <select
-                      required
-                      className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all appearance-none cursor-pointer text-sm pr-10"
-                      value={leadForm.source}
-                      onChange={e => setLeadForm({ ...leadForm, source: e.target.value })}
-                    >
-                      <option value="">Select Source...</option>
-                      {['Meta Ads', 'Google Ads', 'Website', 'Cold Message', 'Cold Call', 'Instagram', 'Facebook', 'YouTube', 'LinkedIn', 'Fever', 'Other Outreach'].map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Mobile Contact</label>
-                  <input
-                    required
-                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all text-sm"
-                    type="text"
-                    placeholder="+91 0000 0000"
-                    value={leadForm.mobile}
-                    onChange={e => setLeadForm({ ...leadForm, mobile: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Email (Optional)</label>
-                  <input
-                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all text-sm"
-                    type="email"
-                    placeholder="example@email.com"
-                    value={leadForm.email}
-                    onChange={e => setLeadForm({ ...leadForm, email: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Project Value (₹)</label>
-                  <input
-                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all text-sm"
-                    type="number"
-                    placeholder="Estimated Deal Value"
-                    value={leadForm.value || ''}
-                    onChange={e => setLeadForm({ ...leadForm, value: parseInt(e.target.value) || 0 })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Next Follow-Up</label>
-                  <input
-                    required
-                    type="date"
-                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all text-sm"
-                    value={leadForm.nextFollowUp}
-                    onChange={e => setLeadForm({ ...leadForm, nextFollowUp: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Current Sentiment</label>
-                  <div className="relative">
-                    <select
-                      className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none appearance-none cursor-pointer text-sm pr-10"
-                      value={leadForm.status}
-                      onChange={e => setLeadForm({ ...leadForm, status: e.target.value as any })}
-                    >
-                      <option value="Cold">Cold Prospect</option>
-                      <option value="Warm">Warm Opportunity</option>
-                      <option value="Hot">Hot Lead</option>
-                      <option value="Lead Today">High Priority Today</option>
-                      <option value="Lost">Lost Lead</option>
-                      <option value="Closed">Closed (Converts to Client DB)</option>
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                  </div>
-                </div>
-                <div className="md:col-span-2 space-y-1.5">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Activity Logs & Conversation Brief</label>
-                  <textarea
-                    className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 h-24 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none text-sm font-semibold text-slate-600 shadow-inner resize-none"
-                    placeholder="Enter latest updates..."
-                    value={leadForm.description}
-                    onChange={e => setLeadForm({ ...leadForm, description: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              {/* Footer Button */}
-              <div className="pt-2">
+    return (
+        <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Top Navigation Router */}
+            <div className="flex p-1.5 bg-slate-100 rounded-2xl w-fit">
                 <button
-                  type="submit"
-                  className={`w-full py-4 text-white font-black rounded-xl shadow-xl hover:-translate-y-0.5 active:scale-[0.98] transition-all uppercase tracking-[0.2em] text-xs flex items-center justify-center gap-3 ${showUpdateModal ? 'bg-indigo-600 shadow-indigo-600/20' : 'bg-blue-600 shadow-blue-600/20'
-                    }`}
+                    onClick={() => setActiveTab('dashboard')}
+                    className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'dashboard'
+                        ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                        }`}
                 >
-                  {showUpdateModal ? 'Commit Activity Updates' : 'Authorize New Lead'}
-                  <ArrowRight size={16} />
+                    Dashboard
                 </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+                <button
+                    onClick={() => setActiveTab('inbound')}
+                    className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'inbound'
+                        ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                        }`}
+                >
+                    Inbound
+                </button>
+                <button
+                    onClick={() => setActiveTab('outbound')}
+                    className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'outbound'
+                        ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                        }`}
+                >
+                    Outbound
+                </button>
+            </div>
 
-      {/* Delete Confirmation Modal */}
-      {leadToDelete && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full p-6 border border-slate-100 transform transition-all scale-100">
-            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 mx-auto">
-              <Trash2 className="text-red-500" size={24} />
+            {/* Render Active View */}
+            <div className="transition-all">
+                {activeTab === 'dashboard' && (
+                    <SalesDashboard
+                        leads={leads}
+                        setLeads={setLeads}
+                        setClients={setClients}
+                        services={services}
+                        campaigns={campaigns}
+                        campaignProspects={campaignProspects}
+                        activeDeals={activeDeals}
+                        nurturingLeads={nurturingLeads}
+                        noResponseLeads={noResponseLeads}
+                        suppressedLeads={suppressedLeads}
+                        inboundSources={inboundSources}
+                        inboundLeads={inboundLeads}
+                        inboundActiveDeals={inboundActiveDeals}
+                        inboundNurturing={inboundNurturing}
+                        inboundNoResponseLeads={inboundNoResponseLeads}
+                        inboundSuppressedLeads={inboundSuppressedLeads}
+                    />
+                )}
+                {activeTab === 'inbound' && (
+                    <SalesInbound
+                        leads={leads} setLeads={setLeads} setClients={setClients}
+                        services={services} campaigns={campaigns}
+                        inboundSources={inboundSources} inboundLeads={inboundLeads}
+                        inboundActiveDeals={inboundActiveDeals} inboundNurturing={inboundNurturing}
+                        inboundNoResponseLeads={inboundNoResponseLeads}
+                        inboundSuppressedLeads={inboundSuppressedLeads}
+                        channels={channels}
+                        autoOpenProspectId={autoOpenProspectId}
+                        onClearAutoOpen={onClearAutoOpen}
+                    />
+                )}
+                {activeTab === 'outbound' && (
+                    <SalesOutbound
+                        leads={leads} setLeads={setLeads} setClients={setClients}
+                        services={services} campaigns={campaigns}
+                        campaignProspects={campaignProspects} activeDeals={activeDeals}
+                        nurturingLeads={nurturingLeads} noResponseLeads={noResponseLeads}
+                        suppressedLeads={suppressedLeads} channels={channels}
+                        autoOpenProspectId={autoOpenProspectId}
+                        onClearAutoOpen={onClearAutoOpen}
+                    />
+                )}
             </div>
-            <h3 className="text-lg font-black text-slate-900 text-center mb-2">Delete Prospect?</h3>
-            <p className="text-center text-slate-500 text-xs font-medium mb-6 leading-relaxed">
-              Are you sure you want to permanently delete this lead? This action cannot be undone.
-              {leadToDelete.googleResourceName && (
-                <span className="block mt-2 text-rose-600 font-bold">This will also delete the contact from Google Contacts!</span>
-              )}
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setLeadToDelete(null)}
-                className="flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                className="flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider bg-red-500 text-white shadow-lg shadow-red-500/30 hover:bg-red-600 transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
         </div>
-      )}
-    </div>
-  );
+    );
 };
 
 export default SalesCRM;

@@ -138,6 +138,20 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
     }));
   };
 
+  // Auto-Finish Logic: Transition active packages to completed when 100% done
+  useEffect(() => {
+    const activePkgs = packages.filter(p => p.status === 'active');
+    activePkgs.forEach(async (pkg) => {
+      if (getPackageProgress(pkg) === 100) {
+        try {
+          await updatePackageInDB(pkg.id, { status: 'completed' } as any);
+        } catch (error) {
+          console.error("Error auto-finishing package:", error);
+        }
+      }
+    });
+  }, [packages, projects]); // Re-run when projects change (progress calculation depends on projects)
+
   const updateLineItem = (index: number, field: keyof PackageLineItem, value: any) => {
     setNewPackage(prev => ({
       ...prev,
@@ -362,7 +376,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
     } else {
       doc.setTextColor(148, 163, 184); // slate-400
     }
-    doc.text(pkg.status === 'active' ? 'ACTIVE' : 'COMPLETED', pageWidth - 14, 25, { align: 'right' });
+    doc.text(pkg.status === 'active' ? 'ACTIVE' : 'FINISHED', pageWidth - 14, 25, { align: 'right' });
     doc.setFont(undefined, 'normal');
 
     // Client & Package Details
@@ -1316,157 +1330,182 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
       </>)}
 
       {/* === PACKAGES TAB === */}
-      {activeGraphicsTab === 'packages' && (
-        <div className="space-y-6">
-          {/* Package Stats & Controls */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-center">
-            <div className="xl:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-violet-600 px-8 py-6 rounded-[2rem] text-white shadow-xl shadow-violet-600/20 relative overflow-hidden group hover:scale-[1.02] transition-transform">
-                <h4 className="text-[10px] font-black opacity-80 uppercase tracking-widest relative z-10">Active Packages</h4>
-                <p className="text-4xl font-black relative z-10 mt-2">{packages.filter(p => p.status === 'active').length}</p>
-                <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
-              </div>
-              <div className="bg-white px-8 py-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-violet-100 transition-colors group">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Package Value</h4>
-                <p className="text-3xl font-black text-slate-900 tracking-tight group-hover:text-violet-600 transition-colors">₹{packages.filter(p => p.status === 'active').reduce((s, p) => s + p.totalAmount, 0).toLocaleString()}</p>
-              </div>
-              <div className="bg-white px-8 py-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-emerald-100 transition-colors group">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Completed Packages</h4>
-                <p className="text-3xl font-black text-slate-900 tracking-tight group-hover:text-emerald-600 transition-colors">{packages.filter(p => p.status === 'completed').length}</p>
-              </div>
-            </div>
-            <div className="xl:col-span-4 flex justify-end">
-              <button
-                onClick={() => setShowPackageModal(true)}
-                className="bg-violet-600 text-white px-6 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.1em] flex items-center justify-center gap-3 hover:bg-violet-700 transition-all shadow-lg shadow-violet-600/20 active:scale-95"
-              >
-                <Plus size={20} className="stroke-[3]" />
-                <span>New Package</span>
-              </button>
-            </div>
-          </div>
+      {activeGraphicsTab === 'packages' && (() => {
+        // Filter packages based on the current period selection
+        const filteredPackages = packages.filter(p => {
+          if (selectedMonth === 'all') return true;
+          const pkgDate = new Date(p.createdAt || '');
+          if (selectedMonth === 'custom') {
+            if (!customDateRange.start || !customDateRange.end) return true;
+            const start = new Date(customDateRange.start);
+            const end = new Date(customDateRange.end);
+            end.setHours(23, 59, 59, 999);
+            return pkgDate >= start && pkgDate <= end;
+          }
+          if (selectedMonth === 'specific') {
+            if (!specificDate) return true;
+            return pkgDate.toISOString().split('T')[0] === specificDate;
+          }
+          return pkgDate.getMonth() === selectedMonth;
+        });
 
-          {/* Active Packages List */}
-          <div className="space-y-4">
-            {packages.filter(p => p.status === 'active').length === 0 ? (
-              <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl py-24 text-center">
-                <div className="w-16 h-16 bg-violet-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <PackageIcon size={32} className="text-violet-300" />
+        const activePkgs = filteredPackages.filter(p => p.status === 'active');
+        const finishedPkgs = filteredPackages.filter(p => p.status === 'completed');
+        const totalValue = activePkgs.reduce((s, p) => s + p.totalAmount, 0);
+
+        return (
+          <div className="space-y-6">
+            {/* Package Stats & Controls */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-center">
+              <div className="xl:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-violet-600 px-8 py-6 rounded-[2rem] text-white shadow-xl shadow-violet-600/20 relative overflow-hidden group hover:scale-[1.02] transition-transform">
+                  <h4 className="text-[10px] font-black opacity-80 uppercase tracking-widest relative z-10">Active Packages</h4>
+                  <p className="text-4xl font-black relative z-10 mt-2">{activePkgs.length}</p>
+                  <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
                 </div>
-                <p className="font-black text-xs uppercase tracking-[0.3em] text-slate-400">No active packages</p>
-                <p className="text-[10px] text-slate-300 mt-2 font-medium">Create a package to get started</p>
+                <div className="bg-white px-8 py-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-violet-100 transition-colors group">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Package Value</h4>
+                  <p className="text-3xl font-black text-slate-900 tracking-tight group-hover:text-violet-600 transition-colors">₹{totalValue.toLocaleString()}</p>
+                </div>
+                <div className="bg-white px-8 py-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-emerald-100 transition-colors group">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Finished Packages</h4>
+                  <p className="text-3xl font-black text-slate-900 tracking-tight group-hover:text-emerald-600 transition-colors">{finishedPkgs.length}</p>
+                </div>
               </div>
-            ) : (
-              packages.filter(p => p.status === 'active').map(pkg => {
-                const progress = getPackageProgress(pkg);
-                const totalQty = pkg.lineItems.reduce((s, li) => s + li.quantity, 0);
-                const totalDone = getPackageTotalDone(pkg);
-                return (
-                  <div key={pkg.id} className="bg-white rounded-[2rem] border border-slate-100 shadow-lg p-6 hover:shadow-xl transition-all">
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-1">
-                          <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-violet-50 text-violet-700 border border-violet-200">📦 {pkg.period}</span>
-                          <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Active</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); openEditPackage(pkg); }}
-                            className="ml-1 p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all"
-                            title="Edit Package"
-                          >
-                            <Edit3 size={14} />
-                          </button>
+
+              <div className="xl:col-span-4 flex justify-end">
+                <button
+                  onClick={() => setShowPackageModal(true)}
+                  className="bg-violet-600 text-white px-6 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.1em] flex items-center justify-center gap-3 hover:bg-violet-700 transition-all shadow-lg shadow-violet-600/20 active:scale-95"
+                >
+                  <Plus size={20} className="stroke-[3]" />
+                  <span>New Package</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Active Packages List */}
+            <div className="space-y-4">
+              {activePkgs.length === 0 ? (
+                <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl py-24 text-center">
+                  <div className="w-16 h-16 bg-violet-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <PackageIcon size={32} className="text-violet-300" />
+                  </div>
+                  <p className="font-black text-xs uppercase tracking-[0.3em] text-slate-400">No active packages</p>
+                  <p className="text-[10px] text-slate-300 mt-2 font-medium">Create a package to get started</p>
+                </div>
+              ) : (
+                activePkgs.map(pkg => {
+                  const progress = getPackageProgress(pkg);
+                  const totalQty = pkg.lineItems.reduce((s, li) => s + li.quantity, 0);
+                  const totalDone = getPackageTotalDone(pkg);
+                  return (
+                    <div key={pkg.id} className="bg-white rounded-[2rem] border border-slate-100 shadow-lg p-6 hover:shadow-xl transition-all">
+                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-1">
+                            <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-violet-50 text-violet-700 border border-violet-200">📦 {pkg.period}</span>
+                            <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Active</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEditPackage(pkg); }}
+                              className="ml-1 p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all"
+                              title="Edit Package"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
+                              className="ml-auto p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                              title="Delete Package"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                          <h4 className="font-black text-slate-900 text-xl tracking-tight mt-2">{pkg.clientName}</h4>
+                          <p className="text-sm font-bold text-slate-500">{pkg.packageName}</p>
+
+                          {/* Line Items */}
+                          <div className="mt-4 space-y-2">
+                            {pkg.lineItems.map((li, idx) => (
+                              <div key={idx} className="flex items-center gap-3 text-xs">
+                                <span className="font-black text-slate-600">{li.serviceName}</span>
+                                <span className="text-slate-300">—</span>
+                                <span className="font-bold text-slate-500">{getLineItemDone(pkg.id, idx)}/{li.quantity}</span>
+                                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden max-w-[120px]">
+                                  <div
+                                    className="h-full bg-violet-500 rounded-full transition-all"
+                                    style={{ width: `${li.quantity === 0 ? 0 : (getLineItemDone(pkg.id, idx) / li.quantity) * 100}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Milestones */}
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {pkg.paymentMilestones.map((m, idx) => (
+                              <span key={idx} className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border flex items-center gap-1.5 ${m.status === 'received' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                m.status === 'due' ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse' :
+                                  m.status === 'pending' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                    m.status === 'waiting' ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                                      'bg-slate-50 text-slate-400 border-slate-200'
+                                }`}>
+                                {m.status === 'received' ? '✅' : m.status === 'due' ? '🟡' : m.status === 'upcoming' ? '⚪' : '🔵'}
+                                {m.label} ({m.percentage}%) — ₹{m.amountDue.toLocaleString()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-3xl font-black text-slate-900">₹{pkg.totalAmount.toLocaleString()}</p>
+                          <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Received: ₹{pkg.receivedAmount.toLocaleString()}</p>
+                          <div className="mt-3">
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Overall Progress</div>
+                            <div className="w-40 h-3 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-violet-500 rounded-full transition-all" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <p className="text-xs font-black text-violet-600 mt-1">{totalDone}/{totalQty} ({progress}%)</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Finished Packages */}
+            {finishedPkgs.length > 0 && (
+              <div className="mt-8">
+                <h3 className="font-black text-xs uppercase tracking-[0.3em] text-slate-400 mb-4">Finished Packages</h3>
+                <div className="space-y-3">
+                  {finishedPkgs.map(pkg => (
+                    <div key={pkg.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 opacity-80">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-black text-slate-700">{pkg.clientName} — {pkg.packageName}</h4>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{pkg.period} • ₹{pkg.totalAmount.toLocaleString()} • ✅ Finished</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CheckCircle size={20} className="text-emerald-500" />
                           <button
                             onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
-                            className="ml-auto p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                            className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
                             title="Delete Package"
                           >
                             <Trash2 size={14} />
                           </button>
                         </div>
-                        <h4 className="font-black text-slate-900 text-xl tracking-tight mt-2">{pkg.clientName}</h4>
-                        <p className="text-sm font-bold text-slate-500">{pkg.packageName}</p>
-
-                        {/* Line Items */}
-                        <div className="mt-4 space-y-2">
-                          {pkg.lineItems.map((li, idx) => (
-                            <div key={idx} className="flex items-center gap-3 text-xs">
-                              <span className="font-black text-slate-600">{li.serviceName}</span>
-                              <span className="text-slate-300">—</span>
-                              <span className="font-bold text-slate-500">{getLineItemDone(pkg.id, idx)}/{li.quantity}</span>
-                              <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden max-w-[120px]">
-                                <div
-                                  className="h-full bg-violet-500 rounded-full transition-all"
-                                  style={{ width: `${li.quantity === 0 ? 0 : (getLineItemDone(pkg.id, idx) / li.quantity) * 100}%` }}
-                                ></div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Milestones */}
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {pkg.paymentMilestones.map((m, idx) => (
-                            <span key={idx} className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border flex items-center gap-1.5 ${m.status === 'received' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                              m.status === 'due' ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse' :
-                                m.status === 'pending' ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                                  m.status === 'waiting' ? 'bg-purple-50 text-purple-700 border-purple-200' :
-                                    'bg-slate-50 text-slate-400 border-slate-200'
-                              }`}>
-                              {m.status === 'received' ? '✅' : m.status === 'due' ? '🟡' : m.status === 'upcoming' ? '⚪' : '🔵'}
-                              {m.label} ({m.percentage}%) — ₹{m.amountDue.toLocaleString()}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-3xl font-black text-slate-900">₹{pkg.totalAmount.toLocaleString()}</p>
-                        <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Received: ₹{pkg.receivedAmount.toLocaleString()}</p>
-                        <div className="mt-3">
-                          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Overall Progress</div>
-                          <div className="w-40 h-3 bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-violet-500 rounded-full transition-all" style={{ width: `${progress}%` }}></div>
-                          </div>
-                          <p className="text-xs font-black text-violet-600 mt-1">{totalDone}/{totalQty} ({progress}%)</p>
-                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
+                  ))}
+                </div>
+              </div>
             )}
           </div>
-
-          {/* Completed Packages */}
-          {packages.filter(p => p.status === 'completed').length > 0 && (
-            <div className="mt-8">
-              <h3 className="font-black text-xs uppercase tracking-[0.3em] text-slate-400 mb-4">Completed Packages</h3>
-              <div className="space-y-3">
-                {packages.filter(p => p.status === 'completed').map(pkg => (
-                  <div key={pkg.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 opacity-80">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-black text-slate-700">{pkg.clientName} — {pkg.packageName}</h4>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{pkg.period} • ₹{pkg.totalAmount.toLocaleString()} • ✅ Completed</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <CheckCircle size={20} className="text-emerald-500" />
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
-                          className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
-                          title="Delete Package"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+        )
+      })()}
 
       {/* === CLIENTS TAB === */}
       {activeGraphicsTab === 'clients' && (
@@ -1548,7 +1587,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                               <div className="flex items-center gap-2 mb-1">
                                 <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest ${pkg.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
                                   }`}>
-                                  {pkg.status === 'active' ? '🟢 Active' : '✅ Completed'}
+                                  {pkg.status === 'active' ? '🟢 Active' : '✅ Finished'}
                                 </span>
                                 <span className="text-[9px] font-bold text-slate-400">{pkg.period}</span>
                               </div>
@@ -1727,6 +1766,11 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                       <input type="number" placeholder="0" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none"
                         value={newTask.advance} onChange={e => setNewTask({ ...newTask, advance: parseInt(e.target.value) || 0 })} />
                     </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Task Date / Allocation Date</label>
+                    <input type="date" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none"
+                      value={newTask.startDate} onChange={e => setNewTask({ ...newTask, startDate: e.target.value, deadline: e.target.value })} required />
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Creative Brief / Description</label>

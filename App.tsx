@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert } from './types';
+import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel } from './types';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Development from './components/Development';
@@ -22,6 +22,16 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
   const [activeSection, setActiveSection] = useState<Section>('Dashboard');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [autoOpenProspectId, setAutoOpenProspectId] = useState<string | null>(null);
+  const [autoOpenTab, setAutoOpenTab] = useState<'dashboard' | 'inbound' | 'outbound'>('dashboard');
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<Set<string>>(new Set());
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('sidebar_collapsed') === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('sidebar_collapsed', isSidebarCollapsed.toString());
+  }, [isSidebarCollapsed]);
 
   // Master State (Synced with Firestore)
   const [clients, setClients] = useState<Client[]>([]);
@@ -32,6 +42,23 @@ const App: React.FC = () => {
   const [packages, setPackages] = useState<Package[]>([]);
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+
+  // Outbound Separated Collections
+  const [campaignProspects, setCampaignProspects] = useState<any[]>([]);
+  const [activeDeals, setActiveDeals] = useState<any[]>([]);
+  const [nurturingLeads, setNurturingLeads] = useState<any[]>([]);
+  const [noResponseLeads, setNoResponseLeads] = useState<any[]>([]);
+  const [suppressedLeads, setSuppressedLeads] = useState<any[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+
+  // Inbound Separated Collections
+  const [inboundSources, setInboundSources] = useState<any[]>([]);
+  const [inboundLeads, setInboundLeads] = useState<any[]>([]);
+  const [inboundActiveDeals, setInboundActiveDeals] = useState<any[]>([]);
+  const [inboundNurturing, setInboundNurturing] = useState<any[]>([]);
+  const [inboundNoResponseLeads, setInboundNoResponseLeads] = useState<any[]>([]);
+  const [inboundSuppressedLeads, setInboundSuppressedLeads] = useState<any[]>([]);
 
   // Firestore Subscriptions
   useEffect(() => {
@@ -43,6 +70,19 @@ const App: React.FC = () => {
     const unsubPackages = subscribeToCollection<Package>('packages', setPackages);
     const unsubPaymentAlerts = subscribeToCollection<PaymentAlert>('paymentAlerts', setPaymentAlerts);
     const unsubQuotations = subscribeToCollection<Quotation>('quotations', setQuotations);
+    const unsubCampaigns = subscribeToCollection<any>('campaigns', setCampaigns);
+    const unsubCampaignProspects = subscribeToCollection<any>('campaignProspects', setCampaignProspects);
+    const unsubActiveDeals = subscribeToCollection<any>('activeDeals', setActiveDeals);
+    const unsubNurturingLeads = subscribeToCollection<any>('nurturing', setNurturingLeads);
+    const unsubNoResponseLeads = subscribeToCollection<any>('noResponsePool', setNoResponseLeads);
+    const unsubSuppressedLeads = subscribeToCollection<any>('suppressionList', setSuppressedLeads);
+    const unsubChannels = subscribeToCollection<Channel>('channels', setChannels);
+    const unsubInboundSources = subscribeToCollection<any>('inboundSources', setInboundSources);
+    const unsubInboundLeads = subscribeToCollection<any>('inboundLeads', setInboundLeads);
+    const unsubInboundActiveDeals = subscribeToCollection<any>('inboundActiveDeals', setInboundActiveDeals);
+    const unsubInboundNurturing = subscribeToCollection<any>('inboundNurturing', setInboundNurturing);
+    const unsubInboundNoResponse = subscribeToCollection<any>('inboundNoResponsePool', setInboundNoResponseLeads);
+    const unsubInboundSuppressed = subscribeToCollection<any>('inboundSuppressionList', setInboundSuppressedLeads);
 
     return () => {
       unsubClients();
@@ -53,12 +93,91 @@ const App: React.FC = () => {
       unsubPackages();
       unsubPaymentAlerts();
       unsubQuotations();
+      unsubCampaigns();
+      unsubCampaignProspects();
+      unsubActiveDeals();
+      unsubNurturingLeads();
+      unsubNoResponseLeads();
+      unsubSuppressedLeads();
+      unsubChannels();
+      unsubInboundSources();
+      unsubInboundLeads();
+      unsubInboundActiveDeals();
+      unsubInboundNurturing();
+      unsubInboundNoResponse();
+      unsubInboundSuppressed();
     };
   }, []);
 
-  const [notifications, setNotifications] = useState<Notification[]>([
-    { id: 'N1', title: 'System Health', message: 'All systems operational.', type: 'success', timestamp: '10 mins ago' }
-  ]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  // Follow-up Notification Logic
+  useEffect(() => {
+    const checkFollowUps = () => {
+      const today = new Date().toISOString().split('T')[0];
+
+      const allActiveDeals = [
+        ...activeDeals.map(d => ({ ...d, type: 'outbound' })),
+        ...inboundActiveDeals.map(d => ({ ...d, type: 'inbound' }))
+      ];
+
+      // 1. Generate new due notifications
+      const dueNotifications: Notification[] = [];
+      allActiveDeals.forEach(deal => {
+        if (deal.nextFollowUp) {
+          const followUpDate = deal.nextFollowUp.split('T')[0];
+          if (followUpDate <= today) {
+            const id = `FU-${deal.id}`;
+            // Only add if not manually dismissed
+            if (!dismissedNotificationIds.has(id)) {
+              dueNotifications.push({
+                id,
+                title: 'Follow-up Scheduled',
+                message: `Time to follow up with ${deal.contactName || deal.name || 'Unknown'}. Source: ${deal.type === 'inbound' ? 'Inbound' : 'Outbound'}.`,
+                type: 'alert',
+                timestamp: 'Now',
+                linkData: {
+                  section: 'Sales CRM',
+                  tab: deal.type as any,
+                  prospectId: deal.id
+                }
+              });
+            }
+          }
+        }
+      });
+
+      // 2. Filter out systemic notifications from the master list (keeping custom ones if any existed)
+      // and only keep those that are still 'due' and NOT 'dismissed'
+      setNotifications(dueNotifications);
+    };
+
+    // Sync periodically
+    checkFollowUps();
+    const interval = setInterval(checkFollowUps, 60000); // Re-check every minute
+    return () => clearInterval(interval);
+  }, [activeDeals, inboundActiveDeals, dismissedNotificationIds]);
+
+  const handleNotificationClick = (linkData: any) => {
+    if (linkData.section) {
+      setActiveSection(linkData.section);
+    }
+    if (linkData.tab) {
+      setAutoOpenTab(linkData.tab);
+    }
+    if (linkData.prospectId) {
+      setAutoOpenProspectId(linkData.prospectId);
+    }
+  };
+
+  const handleDismissNotification = (id: string) => {
+    setDismissedNotificationIds(prev => new Set([...Array.from(prev), id]));
+  };
+
+  const handleClearAllNotifications = () => {
+    const allIds = notifications.map(n => n.id);
+    setDismissedNotificationIds(prev => new Set([...Array.from(prev), ...allIds]));
+  };
 
   const handleLogin = (user: Employee) => {
     setCurrentUser(user);
@@ -108,12 +227,28 @@ const App: React.FC = () => {
       case 'Quotations': return <QuotationsView clients={clients} services={services} />;
       case 'Development': return <Development clients={clients} projects={projects} setProjects={setProjects} services={services} />;
       case 'Graphics Designing': return <GraphicsDesigning employees={employees} projects={projects} setProjects={setProjects} clients={clients} services={services} packages={packages} paymentAlerts={paymentAlerts} />;
-      case 'Sales CRM': return <SalesCRM leads={leads} setLeads={setLeads} setClients={setClients} services={services} />;
+      case 'Sales CRM': return <SalesCRM
+        leads={leads} setLeads={setLeads}
+        setClients={setClients} services={services} campaigns={campaigns}
+        campaignProspects={campaignProspects} activeDeals={activeDeals}
+        nurturingLeads={nurturingLeads} noResponseLeads={noResponseLeads}
+        suppressedLeads={suppressedLeads} channels={channels}
+        inboundSources={inboundSources} inboundLeads={inboundLeads}
+        inboundActiveDeals={inboundActiveDeals} inboundNurturing={inboundNurturing}
+        inboundNoResponseLeads={inboundNoResponseLeads} inboundSuppressedLeads={inboundSuppressedLeads}
+        autoOpenProspectId={autoOpenProspectId} autoOpenTab={autoOpenTab}
+        onClearAutoOpen={() => setAutoOpenProspectId(null)}
+      />;
       case 'Client DB': return <ClientDB clients={clients} setClients={setClients} />;
       case 'History': return <History projects={projects} setProjects={setProjects} employees={employees} packages={packages} />;
       case 'Payments': return <Payments paymentAlerts={paymentAlerts} packages={packages} clients={clients} />;
-      case 'Notification': return <Notifications notifications={notifications} />;
-      case 'Settings': return <Settings employees={employees} setEmployees={setEmployees} services={services} setServices={setServices} onLogout={handleLogout} />;
+      case 'Notification': return <Notifications
+        notifications={notifications}
+        onNotificationClick={handleNotificationClick}
+        onDismiss={handleDismissNotification}
+        onClearAll={handleClearAllNotifications}
+      />;
+      case 'Settings': return <Settings employees={employees} setEmployees={setEmployees} services={services} setServices={setServices} channels={channels} onLogout={handleLogout} />;
       default: return <Dashboard clients={clients} projects={projects} leads={leads} />;
     }
   };
@@ -125,6 +260,7 @@ const App: React.FC = () => {
     'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
     'Graphics Designing': projects.filter(p => p.type === 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
     'Client DB': clients.length,
+    Notification: notifications.length,
     Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length
   };
 
@@ -139,8 +275,8 @@ const App: React.FC = () => {
       )}
 
       {/* Sidebar Wrapper */}
-      <div className={`fixed inset-y-0 left-0 z-50 transform lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}>
+      <div className={`fixed inset-y-0 left-0 z-50 transform lg:relative lg:translate-x-0 transition-all duration-300 ease-in-out ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        } ${isSidebarCollapsed ? 'lg:w-20' : 'lg:w-64'}`}>
         <Sidebar
           activeSection={activeSection}
           onSectionChange={(section) => {
@@ -149,6 +285,8 @@ const App: React.FC = () => {
           }}
           onLogout={handleLogout}
           counts={counts}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         />
       </div>
 
@@ -169,9 +307,14 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2 md:gap-4">
-            <button className="p-2 md:p-3 rounded-2xl hover:bg-slate-200 transition-all relative bg-white border border-slate-100 shadow-sm">
+            <button
+              onClick={() => setActiveSection('Notification')}
+              className="p-2 md:p-3 rounded-2xl hover:bg-slate-200 transition-all relative bg-white border border-slate-100 shadow-sm"
+            >
               <Bell size={20} className="text-slate-600" />
-              <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
+              {notifications.length > 0 && (
+                <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
+              )}
             </button>
             <div className="flex items-center gap-4 pl-0 md:pl-4 md:border-l border-slate-200">
               <div className="text-right hidden sm:block">

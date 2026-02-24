@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { Employee, Service, Role } from '../types';
-import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook } from 'lucide-react';
-import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, getCompanyProfile, saveCompanyProfile } from '../lib/db';
+import { Employee, Service, Role, Channel } from '../types';
+import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook, Megaphone } from 'lucide-react';
+import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, getCompanyProfile, saveCompanyProfile, addChannelToDB, deleteChannelFromDB } from '../lib/db';
 import { CompanyProfile } from '../types';
 
 interface SettingsProps {
@@ -10,11 +10,12 @@ interface SettingsProps {
   setEmployees?: React.Dispatch<React.SetStateAction<Employee[]>>; // Optional/Deprecated
   services: Service[];
   setServices?: React.Dispatch<React.SetStateAction<Service[]>>; // Optional/Deprecated
+  channels?: Channel[];
   onLogout: () => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'admin' | 'company'>('employees');
+const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [], onLogout }) => {
+  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'channels' | 'admin' | 'company'>('employees');
 
   // Company Profile State
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -98,6 +99,24 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) =>
     mobile: ''
   });
 
+  // Channel Form State
+  const [newChannelName, setNewChannelName] = useState('');
+  const [isAddingChannel, setIsAddingChannel] = useState(false);
+
+  const handleAddChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newChannelName.trim()) return;
+    await addChannelToDB({ name: newChannelName });
+    setNewChannelName('');
+    setIsAddingChannel(false);
+  };
+
+  const removeChannel = async (id: string) => {
+    if (window.confirm('Are you sure you want to completely delete this channel?')) {
+      await deleteChannelFromDB(id);
+    }
+  };
+
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empForm.name || !empForm.username || !empForm.password) return;
@@ -162,6 +181,12 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) =>
           className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'company' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
         >
           Company Config
+        </button>
+        <button
+          onClick={() => setActiveTab('channels')}
+          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'channels' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+        >
+          Outreach Channels
         </button>
         <button
           onClick={() => setActiveTab('admin')}
@@ -379,6 +404,86 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, onLogout }) =>
                 <div className="col-span-full py-12 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
                   <CheckCircle2 className="mx-auto text-slate-300 mb-4 opacity-50" size={48} />
                   <p className="text-slate-500 font-medium">No services defined yet.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'channels' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-2xl font-black text-slate-900">Outreach Channels</h3>
+                <p className="text-sm text-slate-500">Configure dynamically the channels available for Outbound Campaigns.</p>
+              </div>
+              {!isAddingChannel && (
+                <button
+                  onClick={() => setIsAddingChannel(true)}
+                  className="flex items-center gap-2 px-6 py-3 bg-violet-600 text-white rounded-2xl text-sm font-bold shadow-xl shadow-violet-600/20 hover:bg-violet-700 transition-all"
+                >
+                  <Plus size={18} /> Add Channel
+                </button>
+              )}
+            </div>
+
+            {isAddingChannel && (
+              <form onSubmit={handleAddChannel} className="bg-slate-50 p-6 rounded-3xl border border-dashed border-slate-300 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex flex-col md:flex-row gap-4">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Channel Name</label>
+                    <input
+                      autoFocus
+                      type="text"
+                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500"
+                      placeholder="e.g., TikTok, LinkedIn Sales Navigator"
+                      value={newChannelName}
+                      onChange={e => setNewChannelName(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <button
+                      type="submit"
+                      className="px-6 py-3 bg-violet-600 text-white font-bold rounded-xl shadow-lg hover:bg-violet-700 transition-all"
+                    >
+                      Save Channel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingChannel(false)}
+                      className="px-6 py-3 bg-white text-slate-500 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {channels.map(channel => (
+                <div key={channel.id} className="p-6 rounded-2xl border border-slate-100 bg-white flex items-center justify-between hover:shadow-md transition-all group">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-violet-50 text-violet-600 rounded-xl flex items-center justify-center">
+                      <Megaphone size={18} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800">{channel.name}</p>
+                      <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black mt-1">Outreach</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeChannel(channel.id)}
+                    className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 p-2"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+              {channels.length === 0 && (
+                <div className="col-span-full py-12 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                  <Megaphone className="mx-auto text-slate-300 mb-4 opacity-50" size={48} />
+                  <p className="text-slate-500 font-medium">No custom channels defined yet. Default is Email.</p>
                 </div>
               )}
             </div>

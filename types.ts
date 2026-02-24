@@ -6,12 +6,17 @@ export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 export interface Client {
   id: string;
   name: string;
-  companyName: string;
+  companyName?: string;
   mobile: string;
   email: string;
-  serviceEnquired: string;
-  dateAdded: string;
+  serviceEnquired?: string;
+  dateAdded?: string;
   status: 'Active' | 'Inactive';
+  source: string;
+  sourceCampaign?: string;
+  sourceChannel?: string;
+  createdAt?: string;
+  googleResourceName?: string;
 }
 
 export interface Project {
@@ -50,6 +55,149 @@ export interface Lead {
   value?: number; // Potential Deal Value
   dateAdded?: string;
   googleResourceName?: string; // ID for Google Contacts sync
+
+  // -- Outbound Specific Fields (DEPRECATED - Moved to separate collections) --
+  // These fields shouldn't be used for new outbound flow, keeping for legacy type safety if needed temporarily
+  campaignId?: string;
+  outboundStatus?: string;
+  leadScore?: number;
+  nurtureReason?: string;
+  outboundStage?: string;
+  stageEnteredDate?: string;
+  activities?: any[];
+}
+
+// --- Outbound Sales Types (NEW SEPARATED LIFECYCLE) ---
+
+export interface Channel {
+  id: string;
+  name: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  targetRegion: string;
+  serviceId: string;
+  channel: string; // Dynamic ID or Name string
+  startDate: string;
+  endDate: string;
+  cost: number;
+  status: 'Active' | 'Paused' | 'Completed';
+  createdAt: string;
+  isArchived?: boolean;
+}
+
+export interface ContactMethod {
+  type: 'email' | 'phone' | 'instagram' | 'linkedin' | 'whatsapp';
+  value: string;
+}
+
+export interface ActivityTimelineEntry {
+  id: string;
+  date: string;
+  type: 'status_change' | 'note' | 'stage_move' | 'campaign_added';
+  description: string;
+  oldValue?: string;
+  newValue?: string;
+}
+
+export interface CampaignProspect {
+  id: string;
+  campaignId: string;
+
+  // Optional identifiers
+  name?: string; // Legacy/fallback
+  contactName?: string;
+  companyName?: string;
+  projectName?: string; // Legacy
+  decisionMakerName?: string;
+
+  // New flexible contact structure
+  contactMethods: ContactMethod[];
+
+  // Legacy strict fields (kept optional for backwards compatibility during migration)
+  mobile?: string;
+  email?: string;
+
+  outboundStatus: 'Not Contacted' | 'Message Sent' | 'Replied' | 'Interested' | 'Not Interested' | 'No Response';
+  attemptCount: number;
+  lastContactedDate?: string;
+  leadScore: number;
+  createdAt: string;
+  activities: ActivityTimelineEntry[];
+}
+
+export interface ActiveDeal {
+  id: string;
+  campaignId: string;
+
+  // Optional identifiers
+  name?: string;
+  contactName?: string;
+  companyName?: string;
+  projectName?: string;
+  decisionMakerName?: string;
+
+  // New flexible contact structure
+  contactMethods: ContactMethod[];
+
+  mobile?: string;
+  email?: string;
+
+  outboundStage: 'New Prospect' | 'Contacted' | 'Qualified' | 'Proposal Sent' | 'Negotiation' | 'Closed Won' | 'Closed Lost';
+  stageEnteredAt: string;
+  leadScore: number;
+  value?: number;
+  nextFollowUpDate?: string;
+  followUpNotes?: string;
+  createdAt: string; // Date it became an active deal
+  activities: ActivityTimelineEntry[];
+}
+
+export interface NurturedLead {
+  id: string;
+  campaignId: string;
+  name?: string;
+  contactName?: string;
+  companyName?: string;
+  projectName?: string;
+  decisionMakerName?: string;
+  contactMethods: ContactMethod[];
+  mobile?: string;
+  email?: string;
+  nurtureReason: 'Budget Issue' | 'Wrong Timing' | 'Not Interested' | 'No Response'; // 'Not Interested' & 'No Response' might ideally go to their respective pools based on the prompt, but keeping type flexible
+  lastContactedDate?: string;
+  nextFollowUpDate?: string;
+  createdAt: string;
+}
+
+export interface SilentLead {
+  id: string;
+  campaignId: string;
+  name?: string;
+  contactName?: string;
+  companyName?: string;
+  projectName?: string;
+  decisionMakerName?: string;
+  contactMethods: ContactMethod[];
+  mobile?: string;
+  email?: string;
+  attemptCount: number;
+  lastAttemptDate?: string;
+  nextRetryDate?: string;
+  createdAt: string;
+}
+
+export interface SuppressedLead {
+  id: string;
+  campaignId: string;
+  name: string;
+  mobile: string;
+  email: string;
+  projectName?: string;
+  reason: string; // e.g., 'Not Interested', 'Max Attempts Reached'
+  createdAt: string;
 }
 
 export interface Employee {
@@ -68,6 +216,11 @@ export interface Notification {
   message: string;
   type: 'info' | 'warning' | 'success' | 'alert';
   timestamp: string;
+  linkData?: {
+    section: Section;
+    tab?: 'dashboard' | 'inbound' | 'outbound';
+    prospectId?: string;
+  };
 }
 
 export interface Service {
