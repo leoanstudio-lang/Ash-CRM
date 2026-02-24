@@ -13,7 +13,9 @@ import {
   deleteInboundLeadFromDB,
   updateInboundDealInDB,
   deleteInboundDealFromDB,
+  updateInboundNurturedLeadInDB,
   deleteInboundNurturedLeadFromDB,
+  updateInboundSilentLeadInDB,
   deleteInboundSilentLeadFromDB
 } from '../lib/db';
 
@@ -494,9 +496,19 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
   // --- AUTOMATION RULES & UPDATE LOGIC (FOR ACTIVE DEALS) ---
   const updateDeal = async (dealId: string, updates: Partial<Lead>, actionType: 'stage_move' | 'status_change' | 'note' = 'note', description: string = '') => {
+    // Find the currently selected deal. It could be in Active, Nurturing, or No Response pool.
+    let deal = activeDeals.find(d => d.id === dealId);
+    let sourceCollection: 'active' | 'nurturing' | 'silent' = 'active';
 
-    // Find the currently selected deal to process the logic
-    const deal = activeDeals.find(d => d.id === dealId);
+    if (!deal) {
+      deal = (nurturingLeads || []).find(l => l.id === dealId);
+      sourceCollection = 'nurturing';
+    }
+    if (!deal) {
+      deal = (noResponseLeads || []).find(l => l.id === dealId);
+      sourceCollection = 'silent';
+    }
+
     if (!deal) return;
 
     let updatedDeal = { ...deal, ...updates };
@@ -571,52 +583,57 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             console.log(`Auto-synced to Google Contacts at stage: ${updates.outboundStage}`);
           } catch (err) {
             console.warn('Google Contacts soft-sync failed (non-blocking):', err);
-            // Non-blocking: continue even if sync fails at these stages
           }
         }
       }
 
-      // --- AUTO-SYNC TO GOOGLE CONTACTS + CLIENT DB ON WON (hard save, blocks on failure) ---
+      // --- AUTO-SYNC TO GOOGLE CONTACTS + CLIENT DB ON WON (soft-blocks on Google sync failures, but proceed to Client DB) ---
       if (updates.outboundStage === ('Closed Won' as any)) {
         newActivity.description += " (Auto-saving to Google Contacts & Client DB)";
 
+        let resourceName = '';
         if (googleToken) {
           try {
             const { saveContactToGoogle } = await import('../lib/googleContacts');
-            const resourceName = await saveContactToGoogle(googleToken, {
+            resourceName = await saveContactToGoogle(googleToken, {
               firstName: deal.contactName || deal.name || 'Unknown Prospect',
               email: deal.email || (deal.contactMethods?.find((m: any) => m.type === 'email')?.value) || '',
               phone: deal.mobile || (deal.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value) || '',
               company: deal.companyName || deal.projectName || 'Unknown',
               jobTitle: 'Client'
-            });
-            console.log('Outbound Deal Won! Synced to Google Contacts:', resourceName);
-
-            const { addClientToDB } = await import('../lib/db');
-            await addClientToDB({
-              name: deal.contactName || deal.name || getPrimaryContact(deal) || 'Unknown',
-              mobile: deal.mobile || (deal.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value) || '',
-              email: deal.email || (deal.contactMethods?.find((m: any) => m.type === 'email')?.value) || '',
-              source: 'Inbound',
-              sourceCampaign: campaigns.find(c => c.id === deal.campaignId)?.name || '',
-              sourceChannel: campaigns.find(c => c.id === deal.campaignId)?.channel || '',
-              status: 'Active',
-              createdAt: new Date().toISOString(),
-              googleResourceName: resourceName
-            });
-
-            await deleteInboundDealFromDB(dealId);
-            console.log("Deal successfully converted to Client and removed from Active Deals pipeline.");
-            return;
-
+            }) || '';
+            console.log('Inbound Deal Won! Synced to Google Contacts:', resourceName);
           } catch (error) {
-            console.error('Failed to sync won deal to Google Contacts or Create Client', error);
-            alert("Failed to sync to Google Contacts. Deal conversion aborted. Please try again or check connection.");
-            return;
+            console.warn('Failed to sync won deal to Google Contacts (non-blocking for Client DB):', error);
           }
         } else {
-          console.log("No Google Token available to sync won deal.");
-          alert("Cannot mark deal as Won: Google Contacts is not connected. Please connect in Settings first.");
+          console.log("No Google Token available to sync won deal. Proceeding to Client DB only.");
+        }
+
+        try {
+          const { addClientToDB } = await import('../lib/db');
+          await addClientToDB({
+            name: deal.contactName || deal.name || getPrimaryContact(deal) || 'Unknown',
+            companyName: deal.companyName || deal.projectName || '',
+            mobile: deal.mobile || (deal.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value) || '',
+            email: deal.email || (deal.contactMethods?.find((m: any) => m.type === 'email')?.value) || '',
+            source: 'Inbound',
+            status: 'Active',
+            createdAt: new Date().toISOString(),
+            googleResourceName: resourceName
+          });
+
+          // Delete from wherever it was
+          if (sourceCollection === 'active') await deleteInboundDealFromDB(dealId);
+          else if (sourceCollection === 'nurturing') await deleteInboundNurturedLeadFromDB(dealId);
+          else if (sourceCollection === 'silent') await deleteInboundSilentLeadFromDB(dealId);
+
+          setSelectedProspect(null);
+          console.log("Inbound Deal successfully converted to Client and removed from pipeline.");
+          return;
+        } catch (dbErr) {
+          console.error('Failed to create client in DB:', dbErr);
+          alert("Failed to create client entry in DB. Please try again.");
           return;
         }
       }
@@ -627,14 +644,36 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
     // Push the changes to Firebase
     try {
-      await updateInboundDealInDB(dealId, {
+      const finalUpdates = {
         ...updates,
         leadScore: newScore,
         activities: updatedDeal.activities
-      });
-      console.log("Deal successfully updated in DB.");
+      };
+
+      // If moving BACK to active pipeline from Nurturing or Silent
+      if (
+        (sourceCollection === 'nurturing' || sourceCollection === 'silent') &&
+        updates.outboundStage &&
+        updates.outboundStage !== 'Nurturing' &&
+        updates.outboundStage !== 'Closed Lost'
+      ) {
+        // 1. Add to Active
+        await addInboundDealToDB({ ...deal, ...finalUpdates });
+        // 2. Delete from Old
+        if (sourceCollection === 'nurturing') await deleteInboundNurturedLeadFromDB(dealId);
+        else await deleteInboundSilentLeadFromDB(dealId);
+
+        console.log(`Moved inbound lead back to active pipeline from ${sourceCollection}`);
+      } else {
+        // Just a normal update within the same collection
+        if (sourceCollection === 'active') await updateInboundDealInDB(dealId, finalUpdates);
+        else if (sourceCollection === 'nurturing') await updateInboundNurturedLeadInDB(dealId, finalUpdates);
+        else if (sourceCollection === 'silent') await updateInboundSilentLeadInDB(dealId, finalUpdates);
+      }
+
+      console.log("Inbound deal successfully updated in DB.");
     } catch (e) {
-      console.error("Error updating deal: ", e);
+      console.error("Error updating inbound deal: ", e);
     }
   };
 
