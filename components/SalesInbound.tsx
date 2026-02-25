@@ -203,10 +203,31 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
           id: Date.now().toString() + Math.random().toString(),
           type: 'note',
           date: new Date().toISOString(),
-          description: `Manually added to Campaign.` + (manualEntryForm.notes ? ` Notes: ${manualEntryForm.notes}` : '')
+          description: `Manually added to Inbound Campaign.` + (manualEntryForm.notes ? ` Notes: ${manualEntryForm.notes}` : '')
         }],
         createdAt: new Date().toISOString()
       });
+
+      // --- INBOUND: Auto-save to Google Contacts immediately on entry ---
+      // Inbound = they approached us, so we capture the contact right away (no stage gate).
+      if (googleToken) {
+        try {
+          const { saveContactToGoogle } = await import('../lib/googleContacts');
+          await saveContactToGoogle(googleToken, {
+            firstName: manualEntryForm.name,
+            email: manualEntryForm.email || '',
+            phone: manualEntryForm.phone || manualEntryForm.whatsapp || '',
+            company: manualEntryForm.company || '',
+            jobTitle: 'Inbound Lead'
+          });
+          console.log('Inbound contact auto-saved to Google Contacts:', manualEntryForm.name);
+        } catch (gcErr) {
+          // Non-blocking — prospect is still saved to DB even if Google sync fails
+          console.warn('Google Contacts sync failed (non-blocking):', gcErr);
+        }
+      } else {
+        console.warn('No Google token available — contact saved to DB only. Google sync will be retried on next token refresh.');
+      }
 
       setManualEntryForm({ name: '', company: '', phone: '', email: '', whatsapp: '', linkedin: '', notes: '' });
       setShowManualEntryModal(false);
