@@ -257,11 +257,16 @@ const App: React.FC = () => {
   };
 
   // Sidebar dynamic counts
+  const todayStr = new Date().toISOString().split('T')[0];
   const counts = {
     Payments: paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting').length,
     Quotations: quotations.filter(q => q.status === 'Draft' || q.status === 'Sent').length,
     'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
-    'Graphics Designing': projects.filter(p => p.type === 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
+    'Graphics Designing': projects.filter(p =>
+      p.type === 'Graphic' &&
+      ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status) &&
+      p.deadline && p.deadline.split('T')[0] <= todayStr
+    ).length,
     'Client DB': clients.length,
     Notification: notifications.length,
     Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length

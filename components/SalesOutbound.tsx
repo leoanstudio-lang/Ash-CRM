@@ -82,6 +82,8 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
   }, [autoOpenProspectId, activeDeals, campaignProspects, nurturingLeads, noResponseLeads]);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [viewNotesProspect, setViewNotesProspect] = useState<any | null>(null);
+  const [copiedPhone, setCopiedPhone] = useState<string | null>(null);
+  const copyPhone = (num: string) => { navigator.clipboard.writeText(num); setCopiedPhone(num); setTimeout(() => setCopiedPhone(null), 1500); };
   // Panel stage tracking for inline nurture reason
   const [panelSelectedStage, setPanelSelectedStage] = useState<string>('');
   const [panelNurtureReason, setPanelNurtureReason] = useState<string>('Timing');
@@ -260,16 +262,37 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
     };
     const contactIdType = channelToContactType[campaignChannel] || campaignChannel;
 
+    // Proper RFC-4180 CSV parser — handles quoted fields that contain commas
+    const parseCSVLine = (line: string): string[] => {
+      const result: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; } // escaped quote
+          else inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+
     const reader = new FileReader();
     reader.onload = async (event) => {
       const text = event.target?.result as string;
-      const lines = text.split('\n');
-      const headers = lines[0].split(',').map(h => h.trim()); // Keep original case for UI display
+      const lines = text.split(/\r?\n/);
+      const headers = parseCSVLine(lines[0]);
 
       const rows = [];
       for (let i = 1; i < lines.length; i++) {
-        // Simple CSV parse, could fail on escaped commas but good enough for basic use
-        const row = lines[i].split(',').map(r => r.trim());
+        if (!lines[i].trim()) continue;
+        const row = parseCSVLine(lines[i]);
         if (row.some(val => val)) rows.push(row);
       }
 
@@ -1239,8 +1262,8 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                           <button
                             onClick={() => handleCopySequence(seq)}
                             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${copiedSeqId === seq.id
-                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                                : 'bg-slate-100 text-slate-600 hover:bg-amber-100 hover:text-amber-700 border border-slate-200 hover:border-amber-300'
+                              ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                              : 'bg-slate-100 text-slate-600 hover:bg-amber-100 hover:text-amber-700 border border-slate-200 hover:border-amber-300'
                               }`}
                           >
                             {copiedSeqId === seq.id
@@ -1849,7 +1872,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                                       <td className="px-6 py-4">
                                         <p className="font-black text-slate-800 text-sm">{(p.contactName || p.companyName || p.name) || 'Unknown'}</p>
                                         <p className="text-[10px] text-indigo-600 font-bold mt-0.5">{getPrimaryContact(p)}</p>
-                                        {getContactIcons(p)}
+                                        {(() => { const ph = p.mobile || p.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
                                       </td>
                                       <td className="px-6 py-4 text-xs font-bold text-slate-600">
                                         {p.companyName || p.projectName || <span className="text-slate-300">—</span>}
@@ -2136,7 +2159,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                             </td>
                             <td className="px-6 py-4">
                               <p className="font-bold text-xs text-indigo-600">{getPrimaryContact(l)}</p>
-                              {getContactIcons(l)}
+                              {(() => { const ph = l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
                             </td>
                             <td className="px-6 py-4">
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
@@ -2249,7 +2272,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                             </td>
                             <td className="px-6 py-4">
                               <p className="font-bold text-xs text-indigo-600">{getPrimaryContact(l)}</p>
-                              {getContactIcons(l)}
+                              {(() => { const ph = l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
                             </td>
                             <td className="px-6 py-4">
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
