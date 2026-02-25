@@ -46,6 +46,7 @@ const App: React.FC = () => {
 
   // Outbound Separated Collections
   const [campaignProspects, setCampaignProspects] = useState<any[]>([]);
+  const [campaignSequences, setCampaignSequences] = useState<any[]>([]);
   const [activeDeals, setActiveDeals] = useState<any[]>([]);
   const [nurturingLeads, setNurturingLeads] = useState<any[]>([]);
   const [noResponseLeads, setNoResponseLeads] = useState<any[]>([]);
@@ -72,6 +73,7 @@ const App: React.FC = () => {
     const unsubQuotations = subscribeToCollection<Quotation>('quotations', setQuotations);
     const unsubCampaigns = subscribeToCollection<any>('campaigns', setCampaigns);
     const unsubCampaignProspects = subscribeToCollection<any>('campaignProspects', setCampaignProspects);
+    const unsubCampaignSequences = subscribeToCollection<any>('campaignSequences', setCampaignSequences);
     const unsubActiveDeals = subscribeToCollection<any>('activeDeals', setActiveDeals);
     const unsubNurturingLeads = subscribeToCollection<any>('nurturing', setNurturingLeads);
     const unsubNoResponseLeads = subscribeToCollection<any>('noResponsePool', setNoResponseLeads);
@@ -95,6 +97,7 @@ const App: React.FC = () => {
       unsubQuotations();
       unsubCampaigns();
       unsubCampaignProspects();
+      unsubCampaignSequences();
       unsubActiveDeals();
       unsubNurturingLeads();
       unsubNoResponseLeads();
@@ -230,7 +233,7 @@ const App: React.FC = () => {
       case 'Sales CRM': return <SalesCRM
         leads={leads} setLeads={setLeads}
         setClients={setClients} services={services} campaigns={campaigns}
-        campaignProspects={campaignProspects} activeDeals={activeDeals}
+        campaignProspects={campaignProspects} campaignSequences={campaignSequences} activeDeals={activeDeals}
         nurturingLeads={nurturingLeads} noResponseLeads={noResponseLeads}
         suppressedLeads={suppressedLeads} channels={channels}
         inboundSources={inboundSources} inboundLeads={inboundLeads}

@@ -275,6 +275,32 @@ export const deleteCampaignFromDB = async (id: string) => {
     }
 }
 
+// --- Outbound: Campaign Sequences ---
+export const addCampaignSequenceToDB = async (sequence: any) => {
+    try {
+        const docRef = await addDoc(collection(db, "campaignSequences"), sequence);
+        return docRef.id;
+    } catch (e) {
+        console.error("Error adding campaign sequence: ", e);
+    }
+}
+
+export const updateCampaignSequenceInDB = async (id: string, updates: any) => {
+    try {
+        await updateDoc(doc(db, "campaignSequences", id), updates);
+    } catch (e) {
+        console.error("Error updating campaign sequence: ", e);
+    }
+}
+
+export const deleteCampaignSequenceFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "campaignSequences", id));
+    } catch (e) {
+        console.error("Error deleting campaign sequence: ", e);
+    }
+}
+
 // --- Outbound: Campaign Prospects ---
 export const addCampaignProspectToDB = async (prospect: any) => {
     try {

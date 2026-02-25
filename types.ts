@@ -189,6 +189,14 @@ export interface SilentLead {
   createdAt: string;
 }
 
+export interface CampaignSequence {
+  id: string;
+  campaignId: string;
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface SuppressedLead {
   id: string;
   campaignId: string;

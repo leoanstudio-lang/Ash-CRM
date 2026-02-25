@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Lead, Client, Service, Campaign, Channel } from '../types';
-import { Target, Users, Megaphone, Inbox, Search, Filter, Plus, TrendingUp, Calendar, DollarSign, Activity, FileSpreadsheet, Trash2 } from 'lucide-react';
+import { Lead, Client, Service, Campaign, Channel, CampaignSequence } from '../types';
+import { Target, Users, Megaphone, Inbox, Search, Filter, Plus, TrendingUp, Calendar, DollarSign, Activity, FileSpreadsheet, Trash2, AlignLeft, Copy, Check, Pencil, X } from 'lucide-react';
 import {
   addCampaignToDB,
   deleteCampaignFromDB,
@@ -16,7 +16,10 @@ import {
   updateNurturedLeadInDB,
   deleteNurturedLeadFromDB,
   updateSilentLeadInDB,
-  deleteSilentLeadFromDB
+  deleteSilentLeadFromDB,
+  addCampaignSequenceToDB,
+  updateCampaignSequenceInDB,
+  deleteCampaignSequenceFromDB
 } from '../lib/db';
 
 interface SalesOutboundProps {
@@ -26,6 +29,7 @@ interface SalesOutboundProps {
   services: Service[];
   campaigns?: Campaign[];
   campaignProspects?: any[];
+  campaignSequences?: CampaignSequence[];
   activeDeals?: any[];
   nurturingLeads?: any[];
   noResponseLeads?: any[];
@@ -39,12 +43,20 @@ type OutboundTab = 'overview' | 'campaigns' | 'prospects' | 'nurturing' | 'noRes
 
 const SalesOutbound: React.FC<SalesOutboundProps> = ({
   leads, setLeads, setClients, services, campaigns = [],
-  campaignProspects = [], activeDeals = [], nurturingLeads = [], noResponseLeads = [], suppressedLeads = [], channels = [],
+  campaignProspects = [], campaignSequences = [], activeDeals = [], nurturingLeads = [], noResponseLeads = [], suppressedLeads = [], channels = [],
   autoOpenProspectId, onClearAutoOpen
 }) => {
   const [activeTab, setActiveTab] = useState<OutboundTab>('overview');
   const [showNewCampaignModal, setShowNewCampaignModal] = useState(false);
   const [selectedProspect, setSelectedProspect] = useState<any | null>(null);
+
+  // --- Sequence State ---
+  const [showSequenceModal, setShowSequenceModal] = useState(false);
+  const [sequenceCampaignId, setSequenceCampaignId] = useState<string | null>(null);
+  const [seqForm, setSeqForm] = useState<{ title: string; body: string }>({ title: '', body: '' });
+  const [editingSeqId, setEditingSeqId] = useState<string | null>(null);
+  const [copiedSeqId, setCopiedSeqId] = useState<string | null>(null);
+  const [showSeqAddForm, setShowSeqAddForm] = useState(false);
 
   // Auto-open effect
   React.useEffect(() => {
@@ -159,6 +171,48 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
         {prospect.contactMethods.find((m: any) => m.type === 'linkedin') && <span title="LinkedIn">💼</span>}
       </div>
     );
+  };
+
+  // --- Sequence Handlers ---
+  const openSequenceModal = (campaignId: string) => {
+    setSequenceCampaignId(campaignId);
+    setShowSequenceModal(true);
+    setShowSeqAddForm(false);
+    setEditingSeqId(null);
+    setSeqForm({ title: '', body: '' });
+  };
+
+  const handleAddSequence = async () => {
+    if (!seqForm.title.trim() || !seqForm.body.trim() || !sequenceCampaignId) return;
+    await addCampaignSequenceToDB({
+      campaignId: sequenceCampaignId,
+      title: seqForm.title.trim(),
+      body: seqForm.body.trim(),
+      createdAt: new Date().toISOString()
+    });
+    setSeqForm({ title: '', body: '' });
+    setShowSeqAddForm(false);
+  };
+
+  const handleEditSequence = async (seq: CampaignSequence) => {
+    if (!seqForm.title.trim() || !seqForm.body.trim()) return;
+    await updateCampaignSequenceInDB(seq.id, {
+      title: seqForm.title.trim(),
+      body: seqForm.body.trim()
+    });
+    setEditingSeqId(null);
+    setSeqForm({ title: '', body: '' });
+  };
+
+  const handleDeleteSequence = async (id: string) => {
+    if (!window.confirm('Delete this sequence?')) return;
+    await deleteCampaignSequenceFromDB(id);
+  };
+
+  const handleCopySequence = (seq: CampaignSequence) => {
+    navigator.clipboard.writeText(seq.body);
+    setCopiedSeqId(seq.id);
+    setTimeout(() => setCopiedSeqId(null), 2000);
   };
 
   const handleCreateCampaign = async (e: React.FormEvent) => {
@@ -1028,6 +1082,183 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
       })()}
 
 
+      {/* --- SEQUENCE MODAL --- */}
+      {showSequenceModal && sequenceCampaignId && (() => {
+        const campSequences = campaignSequences
+          .filter(s => s.campaignId === sequenceCampaignId)
+          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); // FIFO: oldest first
+        const campName = campaigns.find(c => c.id === sequenceCampaignId)?.name || 'Campaign';
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-[2rem] w-full max-w-2xl max-h-[88vh] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+
+              {/* Modal Header */}
+              <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-amber-50 to-orange-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center shadow-inner">
+                    <AlignLeft size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-800 text-lg tracking-tight">Sequences</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{campName} · {campSequences.length} script{campSequences.length !== 1 ? 's' : ''}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => { setShowSeqAddForm(true); setEditingSeqId(null); setSeqForm({ title: '', body: '' }); }}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20"
+                  >
+                    <Plus size={14} /> New Sequence
+                  </button>
+                  <button onClick={() => { setShowSequenceModal(false); setShowSeqAddForm(false); setEditingSeqId(null); }} className="text-slate-400 hover:text-slate-600 p-2 rounded-xl hover:bg-slate-100 transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+
+                {/* Add Form */}
+                {showSeqAddForm && (
+                  <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 space-y-3 shadow-sm">
+                    <h4 className="text-xs font-black text-amber-800 uppercase tracking-widest flex items-center gap-2">
+                      <Plus size={12} /> New Sequence
+                    </h4>
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-black text-amber-700 uppercase tracking-widest">Title</label>
+                      <input
+                        type="text"
+                        autoFocus
+                        value={seqForm.title}
+                        onChange={e => setSeqForm(f => ({ ...f, title: e.target.value }))}
+                        placeholder="e.g. First Cold Message"
+                        className="w-full px-4 py-2.5 bg-white border border-amber-200 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-black text-amber-700 uppercase tracking-widest">Message / Script</label>
+                      <textarea
+                        rows={5}
+                        value={seqForm.body}
+                        onChange={e => setSeqForm(f => ({ ...f, body: e.target.value }))}
+                        placeholder="Type your outreach script here..."
+                        className="w-full px-4 py-3 bg-white border border-amber-200 rounded-xl text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-400 resize-none transition-all"
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setShowSeqAddForm(false)} className="px-4 py-2 text-xs font-black text-slate-500 hover:bg-slate-100 rounded-xl uppercase tracking-widest transition-colors">
+                        Cancel
+                      </button>
+                      <button onClick={handleAddSequence} className="px-5 py-2 bg-amber-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20">
+                        Save Sequence
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sequence List (FIFO) */}
+                {campSequences.length === 0 && !showSeqAddForm && (
+                  <div className="py-16 text-center">
+                    <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <AlignLeft size={32} className="text-amber-300" />
+                    </div>
+                    <p className="font-black text-xs uppercase tracking-[0.3em] text-slate-400">No Sequences Yet</p>
+                    <p className="text-[10px] text-slate-400 mt-2 font-medium">Click "+ New Sequence" to create your first outreach script.</p>
+                  </div>
+                )}
+
+                {campSequences.map((seq, idx) => (
+                  <div key={seq.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:border-amber-300 transition-colors group">
+                    {editingSeqId === seq.id ? (
+                      /* Edit Mode */
+                      <div className="p-5 space-y-3 bg-indigo-50 border border-indigo-200 rounded-2xl">
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest">Title</label>
+                          <input
+                            type="text"
+                            autoFocus
+                            value={seqForm.title}
+                            onChange={e => setSeqForm(f => ({ ...f, title: e.target.value }))}
+                            className="w-full px-4 py-2.5 bg-white border border-indigo-200 rounded-xl text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest">Message / Script</label>
+                          <textarea
+                            rows={5}
+                            value={seqForm.body}
+                            onChange={e => setSeqForm(f => ({ ...f, body: e.target.value }))}
+                            className="w-full px-4 py-3 bg-white border border-indigo-200 rounded-xl text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400/30 resize-none transition-all"
+                          />
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <button onClick={() => { setEditingSeqId(null); setSeqForm({ title: '', body: '' }); }} className="px-4 py-2 text-xs font-black text-slate-500 hover:bg-slate-100 rounded-xl uppercase tracking-widest transition-colors">
+                            Cancel
+                          </button>
+                          <button onClick={() => handleEditSequence(seq)} className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20">
+                            Save Changes
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* View Mode */
+                      <>
+                        <div className="px-5 pt-4 pb-2 flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <span className="flex-none w-7 h-7 rounded-lg bg-amber-100 text-amber-700 text-xs font-black flex items-center justify-center border border-amber-200">
+                              {idx + 1}
+                            </span>
+                            <h4 className="font-black text-slate-800 text-sm truncate">{seq.title}</h4>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-none opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => { setEditingSeqId(seq.id); setSeqForm({ title: seq.title, body: seq.body }); setShowSeqAddForm(false); }}
+                              title="Edit"
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSequence(seq.id)}
+                              title="Delete"
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="px-5 pb-2">
+                          <p className="text-xs text-slate-600 font-medium leading-relaxed whitespace-pre-wrap line-clamp-4">{seq.body}</p>
+                        </div>
+                        <div className="px-5 pb-4 flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-slate-400">
+                            {new Date(seq.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </span>
+                          <button
+                            onClick={() => handleCopySequence(seq)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${copiedSeqId === seq.id
+                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                                : 'bg-slate-100 text-slate-600 hover:bg-amber-100 hover:text-amber-700 border border-slate-200 hover:border-amber-300'
+                              }`}
+                          >
+                            {copiedSeqId === seq.id
+                              ? <><Check size={11} /> Copied!</>
+                              : <><Copy size={11} /> Copy Text</>
+                            }
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* --- CSV COLUMN MAPPING MODAL --- */}
       {
         csvFileToMap && (
@@ -1557,6 +1788,13 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                       </div>
                     </div>
                     <div className="flex gap-3">
+                      <button
+                        onClick={() => openSequenceModal(activeCamp.id)}
+                        className="flex items-center gap-2 px-5 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-50 hover:border-amber-400 hover:text-amber-700 transition-all shadow-sm"
+                      >
+                        <AlignLeft size={16} />
+                        Sequences
+                      </button>
                       <label className="flex items-center gap-2 px-5 py-3 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20 cursor-pointer">
                         <Plus size={16} />
                         Upload CSV

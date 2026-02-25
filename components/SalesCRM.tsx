@@ -13,6 +13,7 @@ interface SalesCRMProps {
 
     // Outbound Engine Data
     campaignProspects?: any[];
+    campaignSequences?: any[];
     activeDeals?: any[];
     nurturingLeads?: any[];
     noResponseLeads?: any[];
@@ -35,7 +36,7 @@ interface SalesCRMProps {
 
 const SalesCRM: React.FC<SalesCRMProps> = ({
     leads, setLeads, setClients, services, campaigns,
-    campaignProspects, activeDeals, nurturingLeads, noResponseLeads, suppressedLeads, channels,
+    campaignProspects, campaignSequences, activeDeals, nurturingLeads, noResponseLeads, suppressedLeads, channels,
     inboundSources, inboundLeads, inboundActiveDeals, inboundNurturing, inboundNoResponseLeads, inboundSuppressedLeads,
     autoOpenProspectId, autoOpenTab, onClearAutoOpen
 }) => {
@@ -119,7 +120,7 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
                     <SalesOutbound
                         leads={leads} setLeads={setLeads} setClients={setClients}
                         services={services} campaigns={campaigns}
-                        campaignProspects={campaignProspects} activeDeals={activeDeals}
+                        campaignProspects={campaignProspects} campaignSequences={campaignSequences} activeDeals={activeDeals}
                         nurturingLeads={nurturingLeads} noResponseLeads={noResponseLeads}
                         suppressedLeads={suppressedLeads} channels={channels}
                         autoOpenProspectId={autoOpenProspectId}
