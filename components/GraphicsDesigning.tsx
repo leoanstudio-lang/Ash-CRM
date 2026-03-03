@@ -1332,9 +1332,14 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
       {/* === PACKAGES TAB === */}
       {activeGraphicsTab === 'packages' && (() => {
         // Filter packages based on the current period selection
+        // Active packages ALWAY bypass the date filter (so they don't disappear)
         const filteredPackages = packages.filter(p => {
+          if (p.status === 'active') return true;
+
           if (selectedMonth === 'all') return true;
           const pkgDate = new Date(p.createdAt || '');
+          if (isNaN(pkgDate.getTime())) return false; // Hide invalid dates if specific filter is set
+
           if (selectedMonth === 'custom') {
             if (!customDateRange.start || !customDateRange.end) return true;
             const start = new Date(customDateRange.start);
@@ -1349,7 +1354,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
           return pkgDate.getMonth() === selectedMonth;
         });
 
-        const activePkgs = filteredPackages.filter(p => p.status === 'active');
+        const activePkgs = packages.filter(p => p.status === 'active');
         const finishedPkgs = filteredPackages.filter(p => p.status === 'completed');
         const totalValue = activePkgs.reduce((s, p) => s + p.totalAmount, 0);
 
