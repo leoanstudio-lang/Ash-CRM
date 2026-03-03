@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { PaymentAlert, Package, Client } from '../types';
 import { Bell, History, CheckCircle, Clock, PauseCircle, Undo2, Trash2, Wallet, AlertTriangle, ChevronDown, LineChart as ChartIcon, FileText, Download, PieChart } from 'lucide-react';
 import { updatePaymentAlertInDB, deletePaymentAlertFromDB, updatePackageInDB } from '../lib/db';
+import { deleteField } from 'firebase/firestore';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -17,6 +18,9 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
     const [activeTab, setActiveTab] = useState<PaymentTab>('alerts');
     const [alertToDelete, setAlertToDelete] = useState<string | null>(null);
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+    // Actually-received inline panel state
+    const [receivingAlertId, setReceivingAlertId] = useState<string | null>(null);
+    const [actualAmountInput, setActualAmountInput] = useState<string>('');
 
     // Payment Alerts = status is 'due', 'pending', or 'waiting'
     const activeAlerts = paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting');
@@ -40,9 +44,10 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                 grouped[monthName] = { monthDate: d, total: 0, design: 0, dev: 0, payments: [] };
             }
 
-            grouped[monthName].total += p.amount;
-            if (p.department === 'Graphics Designing') grouped[monthName].design += p.amount;
-            if (p.department === 'Development') grouped[monthName].dev += p.amount;
+            const effectiveAmount = p.actualAmount ?? p.amount;
+            grouped[monthName].total += effectiveAmount;
+            if (p.department === 'Graphics Designing') grouped[monthName].design += effectiveAmount;
+            if (p.department === 'Development') grouped[monthName].dev += effectiveAmount;
             grouped[monthName].payments.push(p);
         });
 
@@ -81,12 +86,13 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                 const monthIdx = d.getMonth();
                 const record = data[monthIdx];
                 if (record.Total !== null) {
-                    record.Total += p.amount;
+                    const effectiveAmount = p.actualAmount ?? p.amount;
+                    record.Total += effectiveAmount;
                     // Old records with no dept go to Design so the line accurately tracks those earlier revenues
                     if (p.department === 'Graphics Designing' || !p.department) {
-                        record.Design += p.amount;
+                        record.Design += effectiveAmount;
                     } else if (p.department === 'Development') {
-                        record.Development += p.amount;
+                        record.Development += effectiveAmount;
                     }
                 }
             }
@@ -151,7 +157,9 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
             p.clientName,
             p.packageName || p.taskName || 'N/A',
             p.department || 'N/A',
-            `Rs. ${p.amount.toLocaleString()}`
+            p.actualAmount !== undefined && p.actualAmount !== p.amount
+                ? `Rs. ${p.actualAmount.toLocaleString()} (Billed: Rs. ${p.amount.toLocaleString()})`
+                : `Rs. ${p.amount.toLocaleString()}`
         ]);
 
         autoTable(doc, {
@@ -166,13 +174,15 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
         doc.save(`Financial_Report_${monthLabel.replace(' ', '_')}.pdf`);
     };
 
-    const handleMarkReceived = async (alertId: string) => {
+    const handleMarkReceived = async (alertId: string, overrideAmount?: number) => {
         const alert = paymentAlerts.find(a => a.id === alertId);
+        const effectiveAmount = overrideAmount ?? alert?.amount ?? 0;
+
         if (alert && alert.type === 'package' && alert.packageId) {
             const pkg = packages.find(p => p.id === alert.packageId);
             if (pkg) {
-                // Update package received amount
-                const newReceivedAmount = (pkg.receivedAmount || 0) + alert.amount;
+                // Update package received amount using the effective (actual) amount
+                const newReceivedAmount = (pkg.receivedAmount || 0) + effectiveAmount;
                 // Update milestone status
                 const updatedMilestones = pkg.paymentMilestones.map(m => {
                     if (m.label === alert.milestoneLabel) {
@@ -188,10 +198,28 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
             }
         }
 
-        await updatePaymentAlertInDB(alertId, {
+        const updatePayload: Partial<PaymentAlert> = {
             status: 'received',
             resolvedAt: new Date().toISOString()
-        });
+        };
+        if (overrideAmount !== undefined) {
+            updatePayload.actualAmount = overrideAmount;
+        }
+
+        await updatePaymentAlertInDB(alertId, updatePayload);
+        // Close the inline panel
+        setReceivingAlertId(null);
+        setActualAmountInput('');
+    };
+
+    const handleOpenReceivePanel = (alertId: string, billedAmount: number) => {
+        setReceivingAlertId(alertId);
+        setActualAmountInput(String(billedAmount));
+    };
+
+    const handleCancelReceivePanel = () => {
+        setReceivingAlertId(null);
+        setActualAmountInput('');
     };
 
     const handleMarkPending = async (alertId: string) => {
@@ -207,8 +235,9 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
         if (alert && alert.type === 'package' && alert.packageId) {
             const pkg = packages.find(p => p.id === alert.packageId);
             if (pkg) {
-                // Deduct from package received amount
-                const newReceivedAmount = Math.max(0, (pkg.receivedAmount || 0) - alert.amount);
+                // Deduct from package received amount using actualAmount if it exists
+                const effectiveAmount = alert.actualAmount !== undefined ? alert.actualAmount : alert.amount;
+                const newReceivedAmount = Math.max(0, (pkg.receivedAmount || 0) - effectiveAmount);
                 // Revert milestone status to due
                 const updatedMilestones = pkg.paymentMilestones.map(m => {
                     if (m.label === alert.milestoneLabel) {
@@ -226,7 +255,8 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
 
         await updatePaymentAlertInDB(alertId, {
             status: 'due',
-            resolvedAt: undefined
+            resolvedAt: deleteField() as any,
+            actualAmount: deleteField() as any
         });
     };
 
@@ -243,7 +273,8 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                 const pkg = packages.find(p => p.id === alert.packageId);
                 if (pkg) {
                     // Deduct from package received amount
-                    const newReceivedAmount = Math.max(0, (pkg.receivedAmount || 0) - alert.amount);
+                    const effectiveAmount = alert.actualAmount !== undefined ? alert.actualAmount : alert.amount;
+                    const newReceivedAmount = Math.max(0, (pkg.receivedAmount || 0) - effectiveAmount);
                     // Revert milestone status to due
                     const updatedMilestones = pkg.paymentMilestones.map(m => {
                         if (m.label === alert.milestoneLabel) {
@@ -303,7 +334,7 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                                 const now = new Date();
                                 return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
                             })
-                            .reduce((sum, p) => sum + p.amount, 0)
+                            .reduce((sum, p) => sum + (p.actualAmount ?? p.amount), 0)
                             .toLocaleString()}
                     </p>
                     <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
@@ -414,12 +445,17 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                                         </p>
                                     </div>
 
-                                    <div className="text-right flex-shrink-0">
-                                        <p className="text-2xl font-black text-slate-900">₹{alert.amount.toLocaleString()}</p>
+                                    <div className="flex-shrink-0 w-full md:w-auto">
+                                        <div className="flex items-center justify-end gap-3">
+                                            <p className="text-2xl font-black text-slate-900">₹{alert.amount.toLocaleString()}</p>
+                                        </div>
                                         <div className="flex gap-2 mt-3 justify-end">
                                             <button
-                                                onClick={() => handleMarkReceived(alert.id)}
-                                                className="px-4 py-2 bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-emerald-600 transition-all shadow-md shadow-emerald-500/20 active:scale-95"
+                                                onClick={() => receivingAlertId === alert.id ? handleCancelReceivePanel() : handleOpenReceivePanel(alert.id, alert.amount)}
+                                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 ${receivingAlertId === alert.id
+                                                    ? 'bg-slate-200 text-slate-600 shadow-slate-200/20'
+                                                    : 'bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600'
+                                                    }`}
                                             >
                                                 ✅ Received
                                             </button>
@@ -442,6 +478,43 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                                                 ⏸ Waiting
                                             </button>
                                         </div>
+
+                                        {/* Actually Received inline panel */}
+                                        {receivingAlertId === alert.id && (
+                                            <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-200">
+                                                <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-3">💰 Actually Received</p>
+                                                <div className="flex gap-2 items-center">
+                                                    <div className="relative flex-1">
+                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-600 font-black text-sm">₹</span>
+                                                        <input
+                                                            type="number"
+                                                            value={actualAmountInput}
+                                                            onChange={e => setActualAmountInput(e.target.value)}
+                                                            placeholder={String(alert.amount)}
+                                                            className="w-full pl-7 pr-3 py-2.5 bg-white border border-emerald-300 rounded-xl text-sm font-black text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            const parsed = parseFloat(actualAmountInput);
+                                                            if (!isNaN(parsed) && parsed >= 0) {
+                                                                handleMarkReceived(alert.id, parsed);
+                                                            }
+                                                        }}
+                                                        className="px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-emerald-600 transition-all active:scale-95 whitespace-nowrap shadow-md shadow-emerald-500/20"
+                                                    >
+                                                        ✓ Confirm
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleMarkReceived(alert.id)}
+                                                        className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-slate-200 transition-all active:scale-95 border border-slate-200"
+                                                    >
+                                                        Skip
+                                                    </button>
+                                                </div>
+                                                <p className="text-[9px] text-emerald-600 font-bold mt-2 opacity-70">Skip to record the billed amount (₹{alert.amount.toLocaleString()})</p>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -513,7 +586,12 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
                                             <span className="text-xs font-medium text-slate-600">{payment.milestoneLabel}</span>
                                         </td>
                                         <td className="px-8 py-5">
-                                            <span className="text-sm font-black text-emerald-600">₹{payment.amount.toLocaleString()}</span>
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-black text-emerald-600">₹{(payment.actualAmount ?? payment.amount).toLocaleString()}</span>
+                                                {payment.actualAmount !== undefined && payment.actualAmount !== payment.amount && (
+                                                    <span className="text-[9px] text-slate-400 font-bold mt-0.5">Billed: ₹{payment.amount.toLocaleString()}</span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-8 py-5">
                                             {getStatusBadge(payment.status)}

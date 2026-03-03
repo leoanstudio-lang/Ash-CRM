@@ -1,7 +1,49 @@
 
-export type Section = 'Dashboard' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments';
+export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio';
 export type Role = 'admin' | 'employee';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
+
+export interface TimeLog {
+  id: string;
+  startTime: string; // ISO String
+  endTime?: string; // ISO String
+  durationSeconds?: number;
+}
+
+export interface ExecutionTask {
+  id: string;
+  name: string;
+  department: string;
+  priority: 'High' | 'Medium' | 'Low';
+  impactType: 'Revenue' | 'Growth' | 'System' | 'Admin';
+  energyType: 'Deep Work' | 'Medium Work' | 'Light Work';
+  deadline: string; // ISO string
+  estimatedTimeSeconds: number;
+  actualTimeSeconds: number;
+  status: 'Pending' | 'In Progress' | 'Completed' | 'Ignored';
+  notes: string;
+  clientId?: string;
+  projectId?: string;
+  createdAt: string; // ISO string
+  timeLogs: TimeLog[];
+}
+
+export interface Strategy {
+  id: string;
+  month: string;
+  year: number;
+  targetRevenue: number;
+  blueprintPdfUrl?: string;
+  createdAt: string; // ISO string
+}
+
+export interface StrategyTodo {
+  id: string;
+  strategyId: string;
+  text: string;
+  isCompleted: boolean;
+  createdAt: string;
+}
 
 export interface Client {
   id: string;
@@ -12,11 +54,55 @@ export interface Client {
   serviceEnquired?: string;
   dateAdded?: string;
   status: 'Active' | 'Inactive';
-  source: string;
+  source?: string;
   sourceCampaign?: string;
   sourceChannel?: string;
   createdAt?: string;
   googleResourceName?: string;
+}
+
+// --- CONTENT STUDIO TYPES ---
+
+export interface ContentMonth {
+  id: string; // e.g. "March-2026"
+  month: string;
+  year: number;
+  targetVideos: number;
+  objective: 'Lead Generation' | 'Authority Building' | 'Journey Documentation' | 'Sales Conversion';
+  targetLeads: number;
+  createdAt: string;
+}
+
+export interface ContentCard {
+  id: string;
+  monthId: string; // Maps to ContentMonth
+  title: string;
+  hook: string;
+  type: 'Educational' | 'Proof' | 'Journey' | 'Sales';
+  platform: 'Instagram' | 'LinkedIn' | 'YouTube' | 'Other';
+  scriptNotes: string;
+  cta: string;
+  recordingDate: string;
+  postingDate: string;
+  status: 'Idea' | 'Scripted' | 'Recorded' | 'Edited' | 'Posted';
+
+  // Business fields
+  views?: number;
+  comments?: number;
+  saves?: number;
+  shares?: number;
+  leadsGenerated: number;
+  convertedClient: 'Yes' | 'No';
+
+  createdAt: string;
+}
+
+export interface ContentAsset {
+  id: string;
+  category: 'Hook' | 'CTA' | 'Caption' | 'Script Format' | 'Topic Idea';
+  title: string;
+  content: string;
+  createdAt: string;
 }
 
 export interface Project {
@@ -279,6 +365,7 @@ export interface PaymentAlert {
   taskName?: string; // for standalone task payments
   milestoneLabel: string;
   amount: number;
+  actualAmount?: number; // Actual cash received (may differ from billed amount)
   status: 'received' | 'pending' | 'waiting' | 'due';
   triggeredAt: string;
   resolvedAt?: string;

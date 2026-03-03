@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel } from './types';
+import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel, Strategy } from './types';
 import Sidebar from './components/Sidebar';
-import Dashboard from './components/Dashboard';
+import ExecutionCenter from './components/ExecutionCenter';
+import Strategies from './components/Strategies';
 import Development from './components/Development';
 import GraphicsDesigning from './components/GraphicsDesigning';
 import SalesCRM from './components/SalesCRM';
@@ -14,16 +15,18 @@ import EmployeePanel from './components/EmployeePanel';
 import History from './components/History';
 import Payments from './components/Payments';
 import QuotationsView from './components/Quotations';
+import ContentStudio from './components/ContentStudio';
+import RiskMonitorModal from './components/Strategies/RiskMonitorModal';
 import { Bell } from 'lucide-react';
 import { subscribeToCollection } from './lib/db';
 import { Quotation } from './types';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
-  const [activeSection, setActiveSection] = useState<Section>('Dashboard');
+  const [activeSection, setActiveSection] = useState<Section>('Execution Center');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [autoOpenProspectId, setAutoOpenProspectId] = useState<string | null>(null);
-  const [autoOpenTab, setAutoOpenTab] = useState<'dashboard' | 'inbound' | 'outbound'>('dashboard');
+  const [autoOpenTab, setAutoOpenTab] = useState<'Execution Center' | 'inbound' | 'outbound'>('Execution Center');
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return localStorage.getItem('sidebar_collapsed') === 'true';
@@ -43,6 +46,14 @@ const App: React.FC = () => {
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [executionTasks, setExecutionTasks] = useState<any[]>([]);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [strategyTodos, setStrategyTodos] = useState<any[]>([]);
+
+  // Content Studio
+  const [contentMonths, setContentMonths] = useState<any[]>([]);
+  const [contentCards, setContentCards] = useState<any[]>([]);
+  const [contentAssets, setContentAssets] = useState<any[]>([]);
 
   // Outbound Separated Collections
   const [campaignProspects, setCampaignProspects] = useState<any[]>([]);
@@ -72,6 +83,8 @@ const App: React.FC = () => {
     const unsubPaymentAlerts = subscribeToCollection<PaymentAlert>('paymentAlerts', setPaymentAlerts);
     const unsubQuotations = subscribeToCollection<Quotation>('quotations', setQuotations);
     const unsubCampaigns = subscribeToCollection<any>('campaigns', setCampaigns);
+    const unsubExecutionTasks = subscribeToCollection<any>('executionTasks', setExecutionTasks);
+    const unsubStrategies = subscribeToCollection<Strategy>('strategies', setStrategies);
     const unsubCampaignProspects = subscribeToCollection<any>('campaignProspects', setCampaignProspects);
     const unsubCampaignSequences = subscribeToCollection<any>('campaignSequences', setCampaignSequences);
     const unsubActiveDeals = subscribeToCollection<any>('activeDeals', setActiveDeals);
@@ -85,6 +98,12 @@ const App: React.FC = () => {
     const unsubInboundNurturing = subscribeToCollection<any>('inboundNurturing', setInboundNurturing);
     const unsubInboundNoResponse = subscribeToCollection<any>('inboundNoResponsePool', setInboundNoResponseLeads);
     const unsubInboundSuppressed = subscribeToCollection<any>('inboundSuppressionList', setInboundSuppressedLeads);
+    const unsubStrategyTodos = subscribeToCollection<any>('strategyTodos', setStrategyTodos);
+
+    // Content Studio
+    const unsubContentMonths = subscribeToCollection<any>('contentMonths', setContentMonths);
+    const unsubContentCards = subscribeToCollection<any>('contentCards', setContentCards);
+    const unsubContentAssets = subscribeToCollection<any>('contentAssets', setContentAssets);
 
     return () => {
       unsubClients();
@@ -96,6 +115,8 @@ const App: React.FC = () => {
       unsubPaymentAlerts();
       unsubQuotations();
       unsubCampaigns();
+      unsubExecutionTasks();
+      unsubStrategies();
       unsubCampaignProspects();
       unsubCampaignSequences();
       unsubActiveDeals();
@@ -109,6 +130,10 @@ const App: React.FC = () => {
       unsubInboundNurturing();
       unsubInboundNoResponse();
       unsubInboundSuppressed();
+      unsubStrategyTodos();
+      unsubContentMonths();
+      unsubContentCards();
+      unsubContentAssets();
     };
   }, []);
 
@@ -184,7 +209,7 @@ const App: React.FC = () => {
 
   const handleLogin = (user: Employee) => {
     setCurrentUser(user);
-    if (user.role === 'employee') setActiveSection('Dashboard');
+    if (user.role === 'employee') setActiveSection('Execution Center');
   };
 
   const handleLogout = () => {
@@ -226,7 +251,8 @@ const App: React.FC = () => {
   // Admin View Rendering
   const renderContent = () => {
     switch (activeSection) {
-      case 'Dashboard': return <Dashboard clients={clients} projects={projects} leads={leads} />;
+      case 'Execution Center': return <ExecutionCenter tasks={executionTasks} clients={clients} projects={projects} employees={employees} />;
+      case 'Strategies': return <Strategies strategies={strategies} paymentAlerts={paymentAlerts} />;
       case 'Quotations': return <QuotationsView clients={clients} services={services} />;
       case 'Development': return <Development clients={clients} projects={projects} setProjects={setProjects} services={services} />;
       case 'Graphics Designing': return <GraphicsDesigning employees={employees} projects={projects} setProjects={setProjects} clients={clients} services={services} packages={packages} paymentAlerts={paymentAlerts} />;
@@ -245,6 +271,7 @@ const App: React.FC = () => {
       case 'Client DB': return <ClientDB clients={clients} setClients={setClients} />;
       case 'History': return <History projects={projects} setProjects={setProjects} employees={employees} packages={packages} />;
       case 'Payments': return <Payments paymentAlerts={paymentAlerts} packages={packages} clients={clients} />;
+      case 'Content Studio': return <ContentStudio months={contentMonths} cards={contentCards} assets={contentAssets} />;
       case 'Notification': return <Notifications
         notifications={notifications}
         onNotificationClick={handleNotificationClick}
@@ -252,13 +279,64 @@ const App: React.FC = () => {
         onClearAll={handleClearAllNotifications}
       />;
       case 'Settings': return <Settings employees={employees} setEmployees={setEmployees} services={services} setServices={setServices} channels={channels} onLogout={handleLogout} />;
-      default: return <Dashboard clients={clients} projects={projects} leads={leads} />;
+      default: return <ExecutionCenter tasks={executionTasks} clients={clients} projects={projects} employees={employees} />;
     }
   };
 
   // Sidebar dynamic counts
   const todayStr = new Date().toISOString().split('T')[0];
+
+  // Calculate Strategy Badge Count
+  const calculateStrategyBadge = () => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const now = new Date();
+    const currentMonth = monthNames[now.getMonth()];
+    const currentYear = now.getFullYear();
+
+    const currentStrategy = strategies.find(s => s.month === currentMonth && s.year === currentYear);
+
+    if (currentStrategy) {
+      const currentTodos = strategyTodos.filter(t => t.strategyId === currentStrategy.id);
+      const pendingCurrent = currentTodos.filter(t => !t.isCompleted);
+      if (pendingCurrent.length > 0) return pendingCurrent.length;
+      if (currentTodos.length === 0) return 0;
+    }
+
+    const nextDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const nextMonth = monthNames[nextDate.getMonth()];
+    const nextYear = nextDate.getFullYear();
+
+    const nextStrategy = strategies.find(s => s.month === nextMonth && s.year === nextYear);
+    if (nextStrategy) {
+      const pendingNext = strategyTodos.filter(t => t.strategyId === nextStrategy.id && !t.isCompleted);
+      return pendingNext.length;
+    }
+    return 0;
+  };
+
+  // Calculate Content Studio Badge
+  const calculateContentBadge = () => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const now = new Date();
+
+    let totalTarget = 0;
+    contentMonths.forEach(m => {
+      const targetMonthIndex = monthNames.indexOf(m.month);
+      const targetYear = m.year;
+      // Only include targets up to the current month to reflect the accumulated deficit
+      if (targetYear < now.getFullYear() || (targetYear === now.getFullYear() && targetMonthIndex <= now.getMonth())) {
+        totalTarget += (m.targetVideos || 0);
+      }
+    });
+
+    const totalPublished = contentCards.filter(c => c.status === 'Posted').length;
+
+    const balance = totalTarget - totalPublished;
+    return balance > 0 ? balance : 0;
+  };
+
   const counts = {
+    'Execution Center': executionTasks.filter(t => t.status === 'Pending').length,
     Payments: paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting').length,
     Quotations: quotations.filter(q => q.status === 'Draft' || q.status === 'Sent').length,
     'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
@@ -269,7 +347,9 @@ const App: React.FC = () => {
     ).length,
     'Client DB': clients.length,
     Notification: notifications.length,
-    Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length
+    Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
+    Strategies: calculateStrategyBadge(),
+    'Content Studio': calculateContentBadge()
   };
 
   return (
@@ -339,6 +419,9 @@ const App: React.FC = () => {
           {renderContent()}
         </div>
       </main>
+
+      {/* Global Admin Revenue Risk Monitor */}
+      <RiskMonitorModal paymentAlerts={paymentAlerts} />
     </div>
   );
 };

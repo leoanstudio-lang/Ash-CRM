@@ -88,6 +88,17 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
   const [panelSelectedStage, setPanelSelectedStage] = useState<string>('');
   const [panelNurtureReason, setPanelNurtureReason] = useState<string>('Timing');
   const [showContactEdit, setShowContactEdit] = useState<boolean>(false);
+  // Nurturing filters
+  const [nurtureCampaignFilter, setNurtureCampaignFilter] = useState<string>('all');
+  const [nurtureReasonFilter, setNurtureReasonFilter] = useState<string>('all');
+  const [nurtureSearch, setNurtureSearch] = useState<string>('');
+  // No Response Pool filters
+  const [nrpCampaignFilter, setNrpCampaignFilter] = useState<string>('all');
+  const [nrpSearch, setNrpSearch] = useState<string>('');
+  // Copy to Campaign panel
+  const [showCopyPanel, setShowCopyPanel] = useState<boolean>(false);
+  const [copyTargetCampaignId, setCopyTargetCampaignId] = useState<string>('');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'done'>('idle');
   const [newCampaign, setNewCampaign] = useState<Partial<Campaign>>({
     name: '',
     targetRegion: '',
@@ -453,6 +464,54 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
     }
   };
 
+  const handleCopyToCampaign = async (prospect: any, targetCampaignId: string) => {
+    if (!targetCampaignId) return;
+    setCopyStatus('copying');
+    try {
+      // Rebuild contactMethods: start with existing array, then fill in from top-level fields
+      const existingMethods: any[] = Array.isArray(prospect.contactMethods) ? [...prospect.contactMethods] : [];
+      const hasType = (type: string) => existingMethods.some((m: any) => m.type === type);
+      if (prospect.mobile && !hasType('phone')) existingMethods.push({ type: 'phone', value: prospect.mobile });
+      if (prospect.email && !hasType('email')) existingMethods.push({ type: 'email', value: prospect.email });
+      const whatsappVal = prospect.whatsapp || existingMethods.find((m: any) => m.type === 'whatsapp')?.value;
+      if (whatsappVal && !hasType('whatsapp')) existingMethods.push({ type: 'whatsapp', value: whatsappVal });
+
+      await addCampaignProspectToDB({
+        campaignId: targetCampaignId,
+        contactName: prospect.contactName || prospect.name || '',
+        companyName: prospect.companyName || prospect.projectName || '',
+        decisionMakerName: prospect.decisionMakerName || '',
+        name: prospect.contactName || prospect.name || 'Unknown Prospect',
+        projectName: prospect.companyName || prospect.projectName || '',
+        mobile: prospect.mobile || existingMethods.find((m: any) => m.type === 'phone')?.value || '',
+        email: prospect.email || existingMethods.find((m: any) => m.type === 'email')?.value || '',
+        contactMethods: existingMethods,
+        categoryBadge: prospect.categoryBadge || '',
+        potentialBadge: prospect.potentialBadge || '',
+        outboundStatus: 'Not Contacted',
+        attemptCount: 0,
+        leadScore: 0,
+        activities: [{
+          id: Date.now().toString() + Math.random().toString(),
+          type: 'note',
+          date: new Date().toISOString(),
+          description: `Copied from campaign: ${campaigns.find(c => c.id === prospect.campaignId)?.name || 'Unknown'}. Original lead score: ${prospect.leadScore || 0}.`
+        }],
+        copiedFromId: prospect.id,
+        createdAt: new Date().toISOString()
+      });
+      setCopyStatus('done');
+      setTimeout(() => {
+        setShowCopyPanel(false);
+        setCopyTargetCampaignId('');
+        setCopyStatus('idle');
+      }, 1800);
+    } catch (err) {
+      console.error('Failed to copy prospect to campaign:', err);
+      setCopyStatus('idle');
+    }
+  };
+
   const handleProspectStatusChange = async (prospect: any, newStatus: string) => {
     try {
       if (newStatus === 'Message Sent') {
@@ -745,14 +804,65 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 flex-wrap justify-end">
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current Stage</p>
                     <span className="inline-flex mt-1 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-black border border-indigo-100">
                       {selectedProspect.outboundStage}
                     </span>
                   </div>
-                  <button onClick={() => setSelectedProspect(null)} className="text-slate-400 hover:text-slate-600 font-bold p-2 bg-white rounded-full shadow-sm border border-slate-100 ml-2">✕</button>
+
+                  {/* Copy to Campaign button */}
+                  <div className="relative">
+                    <button
+                      onClick={() => { setShowCopyPanel(p => !p); setCopyTargetCampaignId(''); setCopyStatus('idle'); }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${showCopyPanel
+                        ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-600/20'
+                        : 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100'
+                        }`}
+                      title="Copy to another campaign"
+                    >
+                      🔁 Copy to Campaign
+                    </button>
+
+                    {showCopyPanel && (
+                      <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-violet-200 rounded-2xl shadow-2xl shadow-violet-500/10 z-50 p-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <p className="text-[10px] font-black text-violet-700 uppercase tracking-widest mb-3">📋 Copy to Campaign</p>
+                        <p className="text-[10px] text-slate-500 font-medium mb-3 leading-relaxed">
+                          The prospect will be <strong>copied</strong> (not moved) as a fresh lead in the selected campaign.
+                        </p>
+                        <select
+                          value={copyTargetCampaignId}
+                          onChange={e => setCopyTargetCampaignId(e.target.value)}
+                          className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 mb-3"
+                        >
+                          <option value="">— Select target campaign —</option>
+                          {campaigns
+                            .filter(c => c.id !== selectedProspect.campaignId)
+                            .map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))
+                          }
+                        </select>
+                        {copyStatus === 'done' ? (
+                          <div className="py-2 text-center text-emerald-600 font-black text-xs">✅ Copied successfully!</div>
+                        ) : (
+                          <button
+                            onClick={() => handleCopyToCampaign(selectedProspect, copyTargetCampaignId)}
+                            disabled={!copyTargetCampaignId || copyStatus === 'copying'}
+                            className="w-full py-2.5 bg-violet-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-violet-700 transition-all active:scale-95 shadow-md shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {copyStatus === 'copying' ? '⏳ Copying...' : '🔁 Confirm Copy'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => { setSelectedProspect(null); setShowCopyPanel(false); setCopyStatus('idle'); }}
+                    className="text-slate-400 hover:text-slate-600 font-bold p-2 bg-white rounded-full shadow-sm border border-slate-100"
+                  >✕</button>
                 </div>
               </div>
 
@@ -1698,6 +1808,26 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                   </div>
                 ) : (
                   <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+                    <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search name, company, contact..."
+                          value={nrpSearch}
+                          onChange={e => setNrpSearch(e.target.value)}
+                          className="w-full pl-8 pr-3 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                      </div>
+                      <select
+                        value={nrpCampaignFilter}
+                        onChange={e => setNrpCampaignFilter(e.target.value)}
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                      >
+                        <option value="all">All Campaigns</option>
+                        {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
@@ -2120,17 +2250,35 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                 </div>
 
                 <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
-                  <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <select className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
+                  <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search name, company, contact..."
+                        value={nurtureSearch}
+                        onChange={e => setNurtureSearch(e.target.value)}
+                        className="w-full pl-8 pr-3 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    </div>
+                    <select
+                      value={nurtureCampaignFilter}
+                      onChange={e => setNurtureCampaignFilter(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                    >
                       <option value="all">All Campaigns</option>
                       {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
-                    <select className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
+                    <select
+                      value={nurtureReasonFilter}
+                      onChange={e => setNurtureReasonFilter(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                    >
                       <option value="all">All Nurture Reasons</option>
+                      <option value="Timing">Timing</option>
                       <option value="Budget Issue">Budget Issue</option>
-                      <option value="Wrong Timing">Wrong Timing</option>
-                      <option value="Not Interested">Not Interested</option>
-                      <option value="No Response">No Response</option>
+                      <option value="Knows Price">Knows Price</option>
+                      <option value="Revisit Later">Revisit Later</option>
                     </select>
                   </div>
 
@@ -2147,65 +2295,80 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {nurturedLeadsList.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-12 text-center text-slate-400 text-xs font-medium">No prospects in nurturing.</td>
-                          </tr>
-                        ) : nurturedLeadsList.map(l => (
-                          <tr key={l.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedProspect(l)}>
-                            <td className="px-6 py-4">
-                              <p className="font-black text-slate-800 text-sm">{l.contactName || l.name}</p>
-                              <p className="text-[10px] font-bold text-slate-400 mt-0.5">{l.companyName || l.projectName || 'No Company'}</p>
-                            </td>
-                            <td className="px-6 py-4">
-                              <p className="font-bold text-xs text-indigo-600">{getPrimaryContact(l)}</p>
-                              {(() => { const ph = l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
-                                <Megaphone size={10} className="text-slate-400" />
-                                {campaigns.find(c => c.id === l.campaignId)?.name || '--'}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className={`inline-flex px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${l.nurtureReason === 'Budget Issue' ? 'bg-amber-50 text-amber-600' :
-                                l.nurtureReason === 'Wrong Timing' ? 'bg-blue-50 text-blue-600' :
-                                  l.nurtureReason === 'No Response' ? 'bg-slate-100 text-slate-500' :
-                                    'bg-red-50 text-red-600'
-                                }`}>
-                                {l.nurtureReason}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-2">
-                                <Calendar size={14} className="text-slate-400" />
-                                <span className="text-xs font-bold text-slate-600">
-                                  {l.nextFollowUp ? new Date(l.nextFollowUp).toLocaleDateString() : 'Not Set'}
+                        {(() => {
+                          const q = nurtureSearch.toLowerCase();
+                          const filtered = nurturedLeadsList.filter(l => {
+                            if (nurtureCampaignFilter !== 'all' && l.campaignId !== nurtureCampaignFilter) return false;
+                            if (nurtureReasonFilter !== 'all' && l.nurtureReason !== nurtureReasonFilter) return false;
+                            if (q) {
+                              const name = (l.contactName || l.name || '').toLowerCase();
+                              const company = (l.companyName || l.projectName || '').toLowerCase();
+                              const phone = (l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value || '').toLowerCase();
+                              const email = (l.email || l.contactMethods?.find((m: any) => m.type === 'email')?.value || '').toLowerCase();
+                              if (!name.includes(q) && !company.includes(q) && !phone.includes(q) && !email.includes(q)) return false;
+                            }
+                            return true;
+                          });
+                          return filtered.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-12 text-center text-slate-400 text-xs font-medium">No prospects match your filters.</td>
+                            </tr>
+                          ) : filtered.map(l => (
+                            <tr key={l.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedProspect(l)}>
+                              <td className="px-6 py-4">
+                                <p className="font-black text-slate-800 text-sm">{l.contactName || l.name}</p>
+                                <p className="text-[10px] font-bold text-slate-400 mt-0.5">{l.companyName || l.projectName || 'No Company'}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="font-bold text-xs text-indigo-600">{getPrimaryContact(l)}</p>
+                                {(() => { const ph = l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
+                                  <Megaphone size={10} className="text-slate-400" />
+                                  {campaigns.find(c => c.id === l.campaignId)?.name || '--'}
                                 </span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  const name = l.contactName || l.name || 'this prospect';
-                                  if (!window.confirm(`Delete "${name}" from Nurturing?`)) return;
-                                  try {
-                                    await deleteNurturedLeadFromDB(l.id);
-                                    console.log('Deleted nurtured lead:', l.id);
-                                  } catch (err) {
-                                    console.error('Delete failed:', err);
-                                    alert('Delete failed. Please try again.');
-                                  }
-                                }}
-                                className="w-8 h-8 rounded-full bg-red-50 hover:bg-red-100 text-red-500 flex items-center justify-center mx-auto transition-all border border-red-200"
-                                title="Delete from Nurturing"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`inline-flex px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${l.nurtureReason === 'Budget Issue' ? 'bg-amber-50 text-amber-600' :
+                                  l.nurtureReason === 'Wrong Timing' ? 'bg-blue-50 text-blue-600' :
+                                    l.nurtureReason === 'No Response' ? 'bg-slate-100 text-slate-500' :
+                                      'bg-red-50 text-red-600'
+                                  }`}>
+                                  {l.nurtureReason}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                  <Calendar size={14} className="text-slate-400" />
+                                  <span className="text-xs font-bold text-slate-600">
+                                    {l.nextFollowUp ? new Date(l.nextFollowUp).toLocaleDateString() : 'Not Set'}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const name = l.contactName || l.name || 'this prospect';
+                                    if (!window.confirm(`Delete "${name}" from Nurturing?`)) return;
+                                    try {
+                                      await deleteNurturedLeadFromDB(l.id);
+                                      console.log('Deleted nurtured lead:', l.id);
+                                    } catch (err) {
+                                      console.error('Delete failed:', err);
+                                      alert('Delete failed. Please try again.');
+                                    }
+                                  }}
+                                  className="w-8 h-8 rounded-full bg-red-50 hover:bg-red-100 text-red-500 flex items-center justify-center mx-auto transition-all border border-red-200"
+                                  title="Delete from Nurturing"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          ));
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -2248,6 +2411,26 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                 </div>
 
                 <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+                  <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search name, company, contact..."
+                        value={nrpSearch}
+                        onChange={e => setNrpSearch(e.target.value)}
+                        className="w-full pl-8 pr-3 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    </div>
+                    <select
+                      value={nrpCampaignFilter}
+                      onChange={e => setNrpCampaignFilter(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                    >
+                      <option value="all">All Campaigns</option>
+                      {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
@@ -2260,59 +2443,73 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
-                        {silentLeadsList.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-12 text-center text-slate-400 text-xs font-medium">No prospects in the No Response Pool.</td>
-                          </tr>
-                        ) : silentLeadsList.map(l => (
-                          <tr key={l.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedProspect(l)}>
-                            <td className="px-6 py-4">
-                              <p className="font-black text-slate-800 text-sm">{(l.contactName || l.companyName || l.name) || 'Unknown'}</p>
-                              <p className="text-[10px] font-bold text-slate-400 mt-0.5">{l.companyName || l.projectName || 'No Company'}</p>
-                            </td>
-                            <td className="px-6 py-4">
-                              <p className="font-bold text-xs text-indigo-600">{getPrimaryContact(l)}</p>
-                              {(() => { const ph = l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
-                                <Megaphone size={10} className="text-slate-400" />
-                                {campaigns.find(c => c.id === l.campaignId)?.name || '--'}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              {l.lostLead ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
-                                  ❌ Lost Lead
+                        {(() => {
+                          const q = nrpSearch.toLowerCase();
+                          const filtered = silentLeadsList.filter(l => {
+                            if (nrpCampaignFilter !== 'all' && l.campaignId !== nrpCampaignFilter) return false;
+                            if (q) {
+                              const name = (l.contactName || l.companyName || l.name || '').toLowerCase();
+                              const company = (l.companyName || l.projectName || '').toLowerCase();
+                              const phone = (l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value || '').toLowerCase();
+                              const email = (l.email || l.contactMethods?.find((m: any) => m.type === 'email')?.value || '').toLowerCase();
+                              if (!name.includes(q) && !company.includes(q) && !phone.includes(q) && !email.includes(q)) return false;
+                            }
+                            return true;
+                          });
+                          return filtered.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-12 text-center text-slate-400 text-xs font-medium">No prospects match your filters.</td>
+                            </tr>
+                          ) : filtered.map(l => (
+                            <tr key={l.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedProspect(l)}>
+                              <td className="px-6 py-4">
+                                <p className="font-black text-slate-800 text-sm">{(l.contactName || l.companyName || l.name) || 'Unknown'}</p>
+                                <p className="text-[10px] font-bold text-slate-400 mt-0.5">{l.companyName || l.projectName || 'No Company'}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="font-bold text-xs text-indigo-600">{getPrimaryContact(l)}</p>
+                                {(() => { const ph = l.mobile || l.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value; return ph ? <button onClick={(e) => { e.stopPropagation(); copyPhone(ph); }} title="Click to copy" className={`text-[10px] font-semibold mt-0.5 transition-all cursor-pointer select-none ${copiedPhone === ph ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}>{copiedPhone === ph ? '✓ Copied!' : ph}</button> : null; })()}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
+                                  <Megaphone size={10} className="text-slate-400" />
+                                  {campaigns.find(c => c.id === l.campaignId)?.name || '--'}
                                 </span>
-                              ) : (
-                                <span className="font-black text-indigo-600 border border-indigo-200 bg-indigo-50 w-8 h-8 rounded-full inline-flex items-center justify-center">
-                                  {l.attemptCount || 0}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  const name = l.contactName || l.companyName || l.name || 'this prospect';
-                                  if (!window.confirm(`Delete "${name}" from No Response Pool?`)) return;
-                                  try {
-                                    await deleteSilentLeadFromDB(l.id);
-                                    console.log('Deleted silent lead:', l.id);
-                                  } catch (err) {
-                                    console.error('Delete failed:', err);
-                                    alert('Delete failed. Please try again.');
-                                  }
-                                }}
-                                className="w-8 h-8 rounded-full bg-red-50 hover:bg-red-100 text-red-500 flex items-center justify-center mx-auto transition-all border border-red-200"
-                                title="Delete from No Response Pool"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                {l.lostLead ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                                    ❌ Lost Lead
+                                  </span>
+                                ) : (
+                                  <span className="font-black text-indigo-600 border border-indigo-200 bg-indigo-50 w-8 h-8 rounded-full inline-flex items-center justify-center">
+                                    {l.attemptCount || 0}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const name = l.contactName || l.companyName || l.name || 'this prospect';
+                                    if (!window.confirm(`Delete "${name}" from No Response Pool?`)) return;
+                                    try {
+                                      await deleteSilentLeadFromDB(l.id);
+                                      console.log('Deleted silent lead:', l.id);
+                                    } catch (err) {
+                                      console.error('Delete failed:', err);
+                                      alert('Delete failed. Please try again.');
+                                    }
+                                  }}
+                                  className="w-8 h-8 rounded-full bg-red-50 hover:bg-red-100 text-red-500 flex items-center justify-center mx-auto transition-all border border-red-200"
+                                  title="Delete from No Response Pool"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -2320,6 +2517,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
               </div>
             );
           })()
+
         }
 
       </div >

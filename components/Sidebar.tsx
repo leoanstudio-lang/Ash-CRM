@@ -52,23 +52,27 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onMouseEnter={() => isCollapsed && setHoveredItem(item.id)}
                 onMouseLeave={() => setHoveredItem(null)}
                 className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 group text-left relative ${activeSection === item.id
-                    ? 'bg-[#2563eb] text-white shadow-lg shadow-blue-600/30'
-                    : 'hover:bg-slate-800/50 hover:text-white'
+                  ? 'bg-[#2563eb] text-white shadow-lg shadow-blue-600/30'
+                  : 'hover:bg-slate-800/50 hover:text-white'
                   } ${isCollapsed ? 'justify-center px-0' : ''}`}
               >
-                <span className={`flex-shrink-0 w-6 flex justify-center transition-all duration-300 ${activeSection === item.id ? 'text-white' : 'text-slate-500 group-hover:text-blue-400'
-                  }`}>
-                  {item.icon}
-                </span>
-
-                {!isCollapsed && (
-                  <span className="text-[15px] font-semibold leading-tight whitespace-nowrap overflow-hidden transition-all duration-300">
-                    {item.label}
+                <div className={`flex items-center ${isCollapsed ? 'justify-center w-full' : 'gap-4 flex-1 overflow-hidden'}`}>
+                  <span className={`flex-shrink-0 w-6 flex justify-center transition-all duration-300 ${activeSection === item.id ? 'text-white' : 'text-slate-500 group-hover:text-blue-400'
+                    }`}>
+                    {item.icon}
                   </span>
-                )}
+
+                  {!isCollapsed && (
+                    <span className="flex-1 text-[15px] font-semibold leading-tight truncate transition-all duration-300">
+                      {item.label}
+                    </span>
+                  )}
+                </div>
 
                 {counts && counts[item.id] > 0 && (
-                  <span className={`ml-auto bg-red-500 text-white text-[10px] font-black h-5 px-1.5 rounded-full flex items-center justify-center animate-pulse shadow-lg shadow-red-500/30 ${isCollapsed ? 'absolute -top-1 -right-1 min-w-4 h-4 text-[8px] px-1' : 'min-w-[20px]'
+                  <span className={`flex-shrink-0 bg-red-500 text-white font-black flex items-center justify-center shadow-lg shadow-red-500/30 ${isCollapsed
+                      ? 'absolute -top-1.5 -right-1.5 min-w-[20px] h-[20px] text-[10px] px-1 rounded-full border-2 border-[#0f172a]'
+                      : 'ml-auto text-[10px] h-5 min-w-[20px] px-1.5 rounded-full animate-pulse'
                     }`}>
                     {counts[item.id]}
                   </span>

@@ -14,12 +14,16 @@ import {
   CheckCircle2,
   Clock,
   Wallet,
-  FileText
+  Target,
+  FileText,
+  Video
 } from 'lucide-react';
 import { Section } from './types';
 
 export const SIDEBAR_ITEMS = [
-  { id: 'Dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
+  { id: 'Execution Center', label: 'Execution Center', icon: <LayoutDashboard size={20} /> },
+  { id: 'Strategies', label: 'Strategies', icon: <Target size={20} /> },
+  { id: 'Content Studio', label: 'Content Studio', icon: <Video size={20} /> },
   { id: 'Quotations', label: 'Quotations', icon: <FileText size={20} /> },
   { id: 'Development', label: 'Development', icon: <Code2 size={20} /> },
   { id: 'Graphics Designing', label: 'Graphics Designing', icon: <Palette size={20} /> },
