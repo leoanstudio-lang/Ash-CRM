@@ -1,0 +1,63 @@
+diff --git a/components/GraphicsDesigning.tsx b/components/GraphicsDesigning.tsx
+index a906f0d..1c33674 100644
+--- a/components/GraphicsDesigning.tsx
++++ b/components/GraphicsDesigning.tsx
+@@ -688,22 +688,9 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
+     .filter(p => {
+       const isActive = p.status !== 'Completed' && p.status !== 'Closed';
+       if (!isActive) return false;
+-      if (selectedMonth === 'all') return true;
+-      if (selectedMonth === 'custom') {
+-        if (!customDateRange.start || !customDateRange.end) return true;
+-        const projectDate = new Date(p.startDate || p.createdAt || '');
+-        const start = new Date(customDateRange.start);
+-        const end = new Date(customDateRange.end);
+-        end.setHours(23, 59, 59, 999);
+-        return projectDate >= start && projectDate <= end;
+-      }
+-      if (selectedMonth === 'specific') {
+-        if (!specificDate) return true;
+-        const pDate = new Date(p.startDate || p.createdAt || '').toISOString().split('T')[0];
+-        return pDate === specificDate;
+-      }
+-      const projectDate = new Date(p.startDate || p.createdAt || '');
+-      return projectDate.getMonth() === selectedMonth;
++
++      // Active tasks should always be visible so they don't disappear across months
++      return true;
+     })
+     // Search filter
+     .filter(p => {
+@@ -1189,7 +1176,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
+                 className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer min-w-[140px]"
+               >
+                 <option value="">All Services</option>
+-                {[...new Set(graphicProjects.map(p => p.serviceName).filter(Boolean))].sort().map(s => (
++                {Array.from(new Set(graphicProjects.map(p => p.serviceName).filter(Boolean))).sort().map(s => (
+                   <option key={s} value={s}>{s}</option>
+                 ))}
+               </select>
+@@ -1354,8 +1341,21 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
+           return pkgDate.getMonth() === selectedMonth;
+         });
+ 
+-        const activePkgs = packages.filter(p => p.status === 'active');
+-        const finishedPkgs = filteredPackages.filter(p => p.status === 'completed');
++        const activePkgs = packages
++          .filter(p => p.status === 'active')
++          .sort((a, b) => {
++            const dateA = new Date(a.createdAt || 0).getTime();
++            const dateB = new Date(b.createdAt || 0).getTime();
++            return isNaN(dateA) || isNaN(dateB) ? 0 : dateB - dateA;
++          });
++
++        const finishedPkgs = filteredPackages
++          .filter(p => p.status === 'completed')
++          .sort((a, b) => {
++            const dateA = new Date(a.createdAt || 0).getTime();
++            const dateB = new Date(b.createdAt || 0).getTime();
++            return isNaN(dateA) || isNaN(dateB) ? 0 : dateB - dateA;
++          });
+         const totalValue = activePkgs.reduce((s, p) => s + p.totalAmount, 0);
+ 
+         return (

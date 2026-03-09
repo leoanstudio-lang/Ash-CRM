@@ -56,7 +56,11 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
     }
   };
 
-  const filteredProjects = projects.filter(project => {
+  const completedProjects = projects.filter(p =>
+    p.status === 'Completed' || p.status === 'Finished'
+  );
+
+  const filteredProjects = completedProjects.filter(project => {
     const matchesSearch = project.clientName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       project.serviceName?.toLowerCase().includes(searchTerm.toLowerCase());
 
@@ -180,6 +184,17 @@ const History: React.FC<HistoryProps> = ({ projects, employees, packages = [] })
                         <div className="flex flex-col">
                           <span className="font-bold text-slate-800 text-sm tracking-tight">{project.serviceName}</span>
                           <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{project.type}</span>
+
+                          {/* Delivery File Name (set by employee on finish) — takes priority */}
+                          {(project as any).deliveryFileName ? (
+                            <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5">
+                              📁 {(project as any).deliveryFileName}
+                            </span>
+                          ) : project.description ? (
+                            <span className="text-[10px] text-slate-500 font-medium mt-0.5 leading-relaxed line-clamp-2 max-w-[220px]">
+                              {project.description}
+                            </span>
+                          ) : null}
 
                           {/* Package Context */}
                           {project.packageId && (() => {

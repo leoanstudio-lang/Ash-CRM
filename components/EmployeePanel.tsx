@@ -1,22 +1,37 @@
 import React, { useState } from 'react';
-import { Employee, Project, Priority, Client, Package } from '../types';
-import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter } from 'lucide-react';
-import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB } from '../lib/db';
+import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo } from '../types';
+import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare } from 'lucide-react';
+import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB, updateManualTaskInDB, updateQuotationDemoInDB } from '../lib/db';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import NewManualTaskModal from './NewManualTaskModal';
 
-type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working';
+type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working' | 'demos';
 
 interface EmployeePanelProps {
   employee: Employee;
   projects: Project[];
   clients: Client[];
-  setProjects?: React.Dispatch<React.SetStateAction<Project[]>>; // Optional/Deprecated
+  manualTasks?: ManualTask[];
+  quotationDemos?: QuotationDemo[];
+  setProjects?: React.Dispatch<React.SetStateAction<Project[]>>;
   onLogout: () => void;
 }
 
-const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clients, onLogout }) => {
+const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clients, manualTasks = [], quotationDemos = [], onLogout }) => {
   const [currentView, setCurrentView] = useState<EmployeeView>('dashboard');
+  const [showNewTaskModal, setShowNewTaskModal] = useState(false);
+  const [newTaskSuccess, setNewTaskSuccess] = useState(false);
+
+  // --- Finish Confirmation Popup ---
+  const [finishPopup, setFinishPopup] = useState<{
+    type: 'project' | 'manual';
+    taskId: string;
+    taskName: string;
+  } | null>(null);
+  const [finishFileName, setFinishFileName] = useState('');
+  const [isFinishing, setIsFinishing] = useState(false);
+  const fileNameInputRef = React.useRef<HTMLInputElement>(null);
 
   // --- New Filter State ---
   const [taskSearch, setTaskSearch] = useState('');
@@ -32,26 +47,38 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
   const today = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
   // Filter: Assigned to me AND (Start Date is today or in the past)
   // Sort: Past Pending (Backlog) First, then Today's tasks
-  const myTasks = projects
+  // My assigned tasks from projects
+  const myProjectTasks = projects
     .filter(p => p.assignedEmployeeId === employee.id && p.startDate <= today)
     .sort((a, b) => {
-      // 1. Prioritize Backlog (Past Start Date & Not Finished)
       const isBacklogA = a.startDate < today && a.status !== 'Finished';
       const isBacklogB = b.startDate < today && b.status !== 'Finished';
-
       if (isBacklogA && !isBacklogB) return -1;
       if (!isBacklogA && isBacklogB) return 1;
-
-      // 2. Secondary Sort: Priority (Optional, keeping High priority on top within groups)
       const priorityOrder = { 'Urgent': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
       return (priorityOrder[a.priority as keyof typeof priorityOrder] || 2) - (priorityOrder[b.priority as keyof typeof priorityOrder] || 2);
     });
 
-  const updateStatus = async (projectId: string, newStatus: string) => {
+  // Employee's own manual tasks (all regardless of admin confirmation - so employee can track them)
+  const myManualTasks = manualTasks
+    .filter(t => t.createdBy === employee.id)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  // Employee's assigned creative demos
+  const myDemos = quotationDemos
+    .filter(d => d.assignedEmployeeId === employee.id)
+    .sort((a, b) => new Date(a.allocatedDate).getTime() - new Date(b.allocatedDate).getTime());
+
+  const updateStatus = async (projectId: string, newStatus: string, deliveryFileName?: string) => {
     const project = projects.find(p => p.id === projectId);
     if (!project) return;
 
     const updates: Partial<Project> = { status: newStatus };
+
+    // Save the file name the employee entered when finishing
+    if (newStatus === 'Finished' && deliveryFileName) {
+      updates.deliveryFileName = deliveryFileName;
+    }
 
     // If status is finished, the work is done. We need to alert the admin to collect the remaining payment.
     if (newStatus === 'Finished') {
@@ -178,6 +205,52 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
     }
   };
 
+  // Update status of a MANUAL (employee-created) task
+  const updateManualTaskStatus = async (taskId: string, newStatus: ManualTask['status'], deliveryFileName?: string) => {
+    const task = manualTasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const updates: Partial<ManualTask> = { status: newStatus };
+
+    if (newStatus === 'Finished') {
+      updates.finishedDate = new Date().toISOString().split('T')[0];
+      if (deliveryFileName) (updates as any).deliveryFileName = deliveryFileName;
+    }
+
+    await updateManualTaskInDB(taskId, updates);
+
+    // Trigger payment alert if admin has set a value
+    if ((newStatus === 'Finished' || newStatus === 'Waiting') && task.adminConfirmed && task.totalAmount) {
+      const balance = task.totalAmount - (task.advance || 0);
+      if (balance > 0) {
+        try {
+          await addPaymentAlertToDB({
+            clientId: task.clientId,
+            clientName: task.clientName,
+            taskName: task.description.substring(0, 50),
+            milestoneLabel: newStatus === 'Finished' ? 'Task Completed - Final Balance' : 'Payment Due - Work Delivered',
+            amount: balance,
+            status: 'due',
+            triggeredAt: new Date().toISOString(),
+            type: 'standalone',
+            department: task.department,
+          });
+        } catch (err) {
+          console.error('Error creating payment alert for manual task:', err);
+        }
+      }
+    }
+  };
+
+  // Update status of a Demos task
+  const updateDemoStatus = async (demoId: string, newStatus: QuotationDemo['status']) => {
+    const demo = quotationDemos.find(d => d.id === demoId);
+    if (!demo) return;
+
+    // Employee can mark a demo as "Completed". "Approved" is reserved for Admin in Quotations page.
+    await updateQuotationDemoInDB(demoId, { status: newStatus });
+  };
+
   const getPriorityColor = (p: Priority) => {
     switch (p) {
       case 'Urgent': return 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]';
@@ -187,47 +260,37 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
     }
   };
 
-  // Stats for the top bar
-  const activeTasks = myTasks.filter(t => t.status !== 'Finished');
-  // Treat 'Allocated' as 'Pending' for stats to ensure visibility
-  const pendingCount = activeTasks.filter(t => t.status === 'Pending' || t.status === 'Allocated').length;
-  const workingCount = activeTasks.filter(t => t.status === 'Working').length;
-  const waitingCount = activeTasks.filter(t => t.status === 'Waiting').length;
+  // Active tasks from projects
+  const activeTasks = myProjectTasks.filter(t => t.status !== 'Finished');
+  const activeManualTasks = myManualTasks.filter(t => t.status !== 'Finished');
+  const activeDemos = myDemos.filter(d => d.status !== 'Approved' && d.status !== 'Completed');
 
-  // Filter tasks based on current view
-  const getFilteredTasks = () => {
+  // Stats for the top bar
+  // Treat 'Allocated' as 'Pending' for stats to ensure visibility
+  const pendingCount = activeTasks.filter(t => t.status === 'Pending' || t.status === 'Allocated').length
+    + activeManualTasks.filter(t => t.status === 'Pending').length + activeDemos.filter(d => d.status === 'Pending').length;
+  const workingCount = activeTasks.filter(t => t.status === 'Working').length
+    + activeManualTasks.filter(t => t.status === 'Working').length;
+  const waitingCount = activeTasks.filter(t => t.status === 'Waiting').length
+    + activeManualTasks.filter(t => t.status === 'Waiting').length;
+  const demosCount = activeDemos.length;
+
+  // Filter project tasks based on current view
+  const getFilteredProjectTasks = () => {
     let tasks = activeTasks;
     switch (currentView) {
-      case 'pending':
-        tasks = activeTasks.filter(t => t.status === 'Pending' || t.status === 'Allocated');
-        break;
-      case 'waiting':
-        tasks = activeTasks.filter(t => t.status === 'Waiting');
-        break;
-      case 'working':
-        tasks = activeTasks.filter(t => t.status === 'Working');
-        break;
-      case 'dashboard':
-      default:
-        tasks = activeTasks; // Show all active tasks
-        break;
+      case 'pending': tasks = activeTasks.filter(t => t.status === 'Pending' || t.status === 'Allocated'); break;
+      case 'waiting': tasks = activeTasks.filter(t => t.status === 'Waiting'); break;
+      case 'working': tasks = activeTasks.filter(t => t.status === 'Working'); break;
+      default: break;
     }
-
-    // Apply additional filters
     return tasks
-      // Search filter
       .filter(p => {
         if (!taskSearch.trim()) return true;
         const q = taskSearch.toLowerCase();
-        return (
-          (p.serviceName || '').toLowerCase().includes(q) ||
-          (p.clientName || '').toLowerCase().includes(q) ||
-          (p.description || '').toLowerCase().includes(q)
-        );
+        return (p.serviceName || '').toLowerCase().includes(q) || (p.clientName || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q);
       })
-      // Priority filter
       .filter(p => !filterPriority || p.priority === filterPriority)
-      // Date filter (Date Range or Specific Date)
       .filter(p => {
         if (selectedDateFilter === 'all') return true;
         if (selectedDateFilter === 'custom') {
@@ -247,7 +310,29 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
       });
   };
 
-  const filteredTasks = getFilteredTasks();
+  // Filter manual tasks based on current view
+  const getFilteredManualTasks = () => {
+    let tasks = activeManualTasks;
+    switch (currentView) {
+      case 'pending': tasks = activeManualTasks.filter(t => t.status === 'Pending'); break;
+      case 'waiting': tasks = activeManualTasks.filter(t => t.status === 'Waiting'); break;
+      case 'working': tasks = activeManualTasks.filter(t => t.status === 'Working'); break;
+      default: break;
+    }
+    if (taskSearch.trim()) {
+      const q = taskSearch.toLowerCase();
+      tasks = tasks.filter(t => t.description.toLowerCase().includes(q) || t.clientName.toLowerCase().includes(q) || (t.companyName || '').toLowerCase().includes(q));
+    }
+    if (filterPriority) tasks = tasks.filter(t => t.priority === filterPriority);
+    return tasks;
+  };
+
+  const filteredProjectTasks = getFilteredProjectTasks();
+  const filteredManualTasks = getFilteredManualTasks();
+  const filteredDemos = currentView === 'demos'
+    ? activeDemos
+    : activeDemos.filter(d => d.status === currentView.charAt(0).toUpperCase() + currentView.slice(1));
+  const totalFilteredTasks = filteredProjectTasks.length + filteredManualTasks.length + (currentView === 'demos' ? filteredDemos.length : 0);
 
   // Get view title
   const getViewTitle = () => {
@@ -255,6 +340,7 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
       case 'pending': return 'Pending Tasks';
       case 'waiting': return 'Waiting Tasks';
       case 'working': return 'Working Tasks';
+      case 'demos': return 'My Allocated Demos';
       case 'dashboard':
       default: return 'Currently Available';
     }
@@ -328,6 +414,23 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
               {workingCount > 0 && (
                 <span className="ml-auto bg-indigo-800 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
                   {workingCount}
+                </span>
+              )}
+            </button>
+
+            {/* Demos */}
+            <button
+              onClick={() => setCurrentView('demos')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-black transition-all uppercase text-[9px] tracking-widest ${currentView === 'demos'
+                ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/20'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                }`}
+            >
+              <PlaySquare size={16} />
+              <span className="hidden lg:block flex-1 text-left">Demos</span>
+              {demosCount > 0 && (
+                <span className="ml-auto bg-violet-800 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                  {demosCount}
                 </span>
               )}
             </button>
@@ -416,6 +519,21 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
               {workingCount > 0 && (
                 <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full min-w-[16px] text-center">
                   {workingCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setCurrentView('demos')}
+              className={`relative flex flex-col items-center gap-1 px-2 py-2 rounded-xl text-[8px] font-black uppercase tracking-wider transition-all ${currentView === 'demos'
+                ? 'bg-violet-600 text-white shadow-md'
+                : 'text-slate-400 hover:bg-slate-50'
+                }`}
+            >
+              <PlaySquare size={14} />
+              <span>Demos</span>
+              {demosCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-violet-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full min-w-[16px] text-center">
+                  {demosCount}
                 </span>
               )}
             </button>
@@ -590,12 +708,72 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
               <Clock size={14} className="text-indigo-600" />
               {getViewTitle()}
             </h3>
-            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Auto-Sync Active</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Auto-Sync Active</span>
+              <button
+                onClick={() => { setShowNewTaskModal(true); setNewTaskSuccess(false); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest shadow-sm hover:bg-blue-700 transition"
+              >
+                <Plus size={12} />
+                New Task
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            {filteredTasks.map(task => (
 
+
+          <div className="space-y-4">
+
+            {/* === DEMOS TASKS === */}
+            {currentView === 'demos' && filteredDemos.map(demo => (
+              <div key={demo.id} className="bg-white px-6 py-5 rounded-[2rem] border border-violet-100 shadow-sm hover:shadow-lg hover:border-violet-300 transition-all duration-300 relative group overflow-hidden">
+                <div className="absolute top-0 right-0 py-1.5 px-4 bg-violet-500 text-white text-[9px] font-black uppercase tracking-widest rounded-bl-xl shadow-sm z-10">Creative Demo</div>
+                <div className="flex flex-col lg:flex-row justify-between gap-6 relative z-0 mt-3">
+                  <div className="flex-1">
+                    <h4 className="text-lg font-black text-slate-900 tracking-tight">{demo.clientName}</h4>
+                    <p className="text-xs text-slate-500 mt-1.5 leading-relaxed italic opacity-80">"{demo.description || 'Awaiting production details...'}"</p>
+
+                    <div className="grid grid-cols-2 gap-4 mt-6 p-3 bg-violet-50 rounded-2xl border border-violet-100/50">
+                      <div className="flex flex-col">
+                        <span className="text-[8px] text-violet-400 font-black uppercase tracking-widest mb-0.5">Service Required</span>
+                        <span className="text-xs font-black text-slate-800">
+                          {demo.serviceName}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[8px] text-violet-400 font-black uppercase tracking-widest mb-0.5">Date Allocated</span>
+                        <span className="text-xs font-black text-slate-800">
+                          {new Date(demo.allocatedDate).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 justify-center lg:border-l border-slate-100 lg:pl-6 min-w-[200px]">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center mb-1">Status Control</p>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => updateDemoStatus(demo.id, 'Pending')}
+                        className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between group/btn ${(demo.status === 'Pending') ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
+                      >
+                        <span>Pending</span>
+                        {(demo.status === 'Pending') && <CheckCircle size={12} className="text-white" />}
+                      </button>
+                      <button
+                        onClick={() => updateDemoStatus(demo.id, 'Completed')}
+                        className={`w-full px-3 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2`}
+                      >
+                        <span>Mark Completed</span>
+                        <CheckCircle size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* === PROJECT TASKS === */}
+            {currentView !== 'demos' && filteredProjectTasks.map(task => (
               <div key={task.id} className="bg-white px-6 py-5 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-lg hover:border-indigo-100 transition-all duration-300 relative group">
                 <div className="flex flex-col lg:flex-row justify-between gap-6">
                   <div className="flex-1">
@@ -625,19 +803,13 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                   <div className="flex flex-col gap-3 justify-center lg:border-l border-slate-100 lg:pl-6 min-w-[200px]">
                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center mb-1">Status Control</p>
                     <div className="flex flex-col gap-2">
-                      {/* Pending Button - Active if Pending OR Allocated */}
                       <button
                         onClick={() => updateStatus(task.id, 'Pending')}
-                        className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between group/btn ${(task.status === 'Pending' || task.status === 'Allocated')
-                          ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20'
-                          : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
-                          }`}
+                        className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between group/btn ${(task.status === 'Pending' || task.status === 'Allocated') ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
                       >
                         <span>Pending</span>
                         {(task.status === 'Pending' || task.status === 'Allocated') && <CheckCircle size={12} className="text-white" />}
                       </button>
-
-                      {/* Working Button */}
                       <button
                         onClick={() => updateStatus(task.id, 'Working')}
                         className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between group/btn ${task.status === 'Working' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
@@ -645,8 +817,6 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                         <span>Working</span>
                         {task.status === 'Working' && <CheckCircle size={12} className="text-white" />}
                       </button>
-
-                      {/* Waiting Button */}
                       <button
                         onClick={() => updateStatus(task.id, 'Waiting')}
                         className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between group/btn ${task.status === 'Waiting' ? 'bg-rose-500 text-white shadow-md shadow-rose-500/20' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
@@ -654,12 +824,13 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                         <span>Waiting</span>
                         {task.status === 'Waiting' && <CheckCircle size={12} className="text-white" />}
                       </button>
-
                       <div className="h-px bg-slate-100 my-0.5"></div>
-
-                      {/* Finished Button */}
                       <button
-                        onClick={() => updateStatus(task.id, 'Finished')}
+                        onClick={() => {
+                          setFinishFileName('');
+                          setFinishPopup({ type: 'project', taskId: task.id, taskName: task.serviceName });
+                          setTimeout(() => fileNameInputRef.current?.focus(), 50);
+                        }}
                         className="w-full px-3 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                       >
                         <span>Finish</span>
@@ -670,20 +841,187 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                 </div>
               </div>
             ))}
-            {filteredTasks.length === 0 && (
+
+            {/* === MANUAL TASKS === */}
+            {filteredManualTasks.map(task => (
+              <div key={task.id} className="bg-white px-6 py-5 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-lg hover:border-indigo-100 transition-all duration-300 relative group">
+
+                <div className="flex flex-col lg:flex-row justify-between gap-6">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className={`w-2 h-2 rounded-full ${getPriorityColor(task.priority)}`}></span>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{task.priority} Priority</span>
+                    </div>
+                    <h4 className="text-lg font-black text-slate-900 tracking-tight">{task.companyName || task.clientName}</h4>
+                    <p className="text-xs text-slate-500 mt-1.5 leading-relaxed italic opacity-80">"{task.description}"</p>
+
+                    <div className="grid grid-cols-2 gap-4 mt-6 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                      <div className="flex flex-col">
+                        <span className="text-[8px] text-slate-400 font-black uppercase tracking-widest mb-0.5">Client</span>
+                        <span className="text-xs font-black text-slate-800">{task.companyName || task.clientName}</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[8px] text-slate-400 font-black uppercase tracking-widest mb-0.5">Started</span>
+                        <span className="text-xs font-black text-slate-800">{task.startDate}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3 justify-center lg:border-l border-slate-100 lg:pl-6 min-w-[200px]">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center mb-1">Status Control</p>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => updateManualTaskStatus(task.id, 'Pending')}
+                        className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between ${task.status === 'Pending' ? 'bg-slate-800 text-white shadow-md' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
+                      >
+                        <span>Pending</span>
+                        {task.status === 'Pending' && <CheckCircle size={12} className="text-white" />}
+                      </button>
+                      <button
+                        onClick={() => updateManualTaskStatus(task.id, 'Working')}
+                        className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between ${task.status === 'Working' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
+                      >
+                        <span>Working</span>
+                        {task.status === 'Working' && <CheckCircle size={12} className="text-white" />}
+                      </button>
+                      <button
+                        onClick={() => updateManualTaskStatus(task.id, 'Waiting')}
+                        className={`w-full px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-between ${task.status === 'Waiting' ? 'bg-rose-500 text-white shadow-md shadow-rose-500/20' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
+                      >
+                        <span>Waiting</span>
+                        {task.status === 'Waiting' && <CheckCircle size={12} className="text-white" />}
+                      </button>
+                      <div className="h-px bg-slate-100 my-0.5"></div>
+                      <button
+                        onClick={() => {
+                          setFinishFileName('');
+                          setFinishPopup({ type: 'manual', taskId: task.id, taskName: task.description?.substring(0, 40) || 'this task' });
+                          setTimeout(() => fileNameInputRef.current?.focus(), 50);
+                        }}
+                        className="w-full px-3 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                      >
+                        <span>Finish</span>
+                        <CheckCircle size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Empty State */}
+            {totalFilteredTasks === 0 && (
               <div className="py-16 text-center bg-white border-2 border-dashed border-slate-100 rounded-[2rem] shadow-sm">
                 <div className="w-14 h-14 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4">
                   <CheckCircle className="text-emerald-500" size={28} />
                 </div>
                 <p className="text-slate-400 font-black uppercase tracking-[0.2em] text-sm">All Tasks Cleared</p>
                 <p className="text-slate-400 text-[10px] mt-1 opacity-60">Production queue idle.</p>
+                <button
+                  onClick={() => setShowNewTaskModal(true)}
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition"
+                >
+                  <Plus size={14} />
+                  Create a New Task
+                </button>
               </div>
             )}
           </div>
         </div>
       </main>
+
+      {/* New Manual Task Modal */}
+      {showNewTaskModal && (
+        <NewManualTaskModal
+          employee={employee}
+          clients={clients}
+          onClose={() => setShowNewTaskModal(false)}
+          onSuccess={() => {
+            setShowNewTaskModal(false);
+            setNewTaskSuccess(true);
+          }}
+        />
+      )}
+
+      {/* ── Finish Confirmation Popup ── */}
+      {finishPopup && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setFinishPopup(null); }}
+        >
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md p-8 animate-in zoom-in-95 duration-200">
+            {/* Icon + Title */}
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="text-emerald-500" size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900 leading-tight">Mark as Finished</h3>
+                <p className="text-xs text-slate-400 font-medium mt-0.5 truncate max-w-[260px]">{finishPopup.taskName}</p>
+              </div>
+            </div>
+
+            {/* File Name Input */}
+            <div className="mb-6">
+              <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">
+                Delivered File Name <span className="text-rose-500">*</span>
+              </label>
+              <input
+                ref={fileNameInputRef}
+                type="text"
+                value={finishFileName}
+                onChange={e => setFinishFileName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') setFinishPopup(null);
+                  if (e.key === 'Enter' && finishFileName.trim()) {
+                    // trigger confirm
+                    document.getElementById('finish-confirm-btn')?.click();
+                  }
+                }}
+                placeholder="e.g. BeccaBerry_Logo_v2_final.psd"
+                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 focus:border-emerald-500 rounded-xl text-sm font-medium text-slate-800 outline-none transition-all placeholder:text-slate-400"
+              />
+              <p className="text-[10px] text-slate-400 mt-2 font-medium">
+                Enter the exact file name or a short description of the work you are delivering. This will be saved to the work history and the package report.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setFinishPopup(null)}
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                id="finish-confirm-btn"
+                disabled={!finishFileName.trim() || isFinishing}
+                onClick={async () => {
+                  if (!finishFileName.trim() || isFinishing) return;
+                  setIsFinishing(true);
+                  try {
+                    if (finishPopup.type === 'project') {
+                      await updateStatus(finishPopup.taskId, 'Finished', finishFileName.trim());
+                    } else {
+                      await updateManualTaskStatus(finishPopup.taskId, 'Finished', finishFileName.trim());
+                    }
+                    setFinishPopup(null);
+                  } finally {
+                    setIsFinishing(false);
+                  }
+                }}
+                className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+              >
+                {isFinishing ? <><Loader2 size={14} className="animate-spin" /> Saving...</> : <><CheckCircle size={14} /> Confirm Finish</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default EmployeePanel;
+

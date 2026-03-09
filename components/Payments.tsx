@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { PaymentAlert, Package, Client } from '../types';
 import { Bell, History, CheckCircle, Clock, PauseCircle, Undo2, Trash2, Wallet, AlertTriangle, ChevronDown, LineChart as ChartIcon, FileText, Download, PieChart } from 'lucide-react';
 import { updatePaymentAlertInDB, deletePaymentAlertFromDB, updatePackageInDB } from '../lib/db';
+import { processAutomaticRevenue } from '../lib/accounting';
 import { deleteField } from 'firebase/firestore';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import jsPDF from 'jspdf';
@@ -207,6 +208,12 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
         }
 
         await updatePaymentAlertInDB(alertId, updatePayload);
+
+        // Trigger auto-revenue
+        if (alert) {
+            await processAutomaticRevenue(alert, effectiveAmount);
+        }
+
         // Close the inline panel
         setReceivingAlertId(null);
         setActualAmountInput('');

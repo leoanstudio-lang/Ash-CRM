@@ -1,17 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Quotation, QuotationItem, Client, CompanyProfile, DynamicField, Service } from '../types';
-import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, User, Phone, Mail, Navigation, FileSignature, Search, Calendar, Filter, ArrowUpRight, CheckCircle2, AlertCircle } from 'lucide-react';
-import { addQuotationToDB, updateQuotationInDB, addClientToDB, getCompanyProfile, subscribeToCollection, deleteQuotationFromDB } from '../lib/db';
+import { Quotation, QuotationItem, Client, CompanyProfile, DynamicField, Service, QuotationDemo, Employee } from '../types';
+import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, User, Phone, Mail, Navigation, FileSignature, Search, Calendar, Filter, ArrowUpRight, CheckCircle2, AlertCircle, PlaySquare } from 'lucide-react';
+import { addQuotationToDB, updateQuotationInDB, addClientToDB, getCompanyProfile, subscribeToCollection, deleteQuotationFromDB, addQuotationDemoToDB, updateQuotationDemoInDB, deleteQuotationDemoFromDB } from '../lib/db';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 interface QuotationsProps {
     clients: Client[];
     services: Service[];
+    employees: Employee[];
 }
 
-const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
+const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees }) => {
     const [quotations, setQuotations] = useState<Quotation[]>([]);
+    const [demos, setDemos] = useState<QuotationDemo[]>([]);
+    const [activeTab, setActiveTab] = useState<'Quotations' | 'Demos'>('Quotations');
     const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
 
     const [isCreating, setIsCreating] = useState(false);
@@ -21,6 +24,10 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('All');
     const [dateFilter, setDateFilter] = useState('');
+
+    // Demo Filters
+    const [demoSearchTerm, setDemoSearchTerm] = useState('');
+    const [demoStatusFilter, setDemoStatusFilter] = useState<string>('All');
 
     // Form State
     const [clientType, setClientType] = useState<'existing' | 'new'>('existing');
@@ -40,6 +47,13 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
     const [discount, setDiscount] = useState<number>(0);
     const [terms, setTerms] = useState("1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.");
 
+    // Demo Creation State
+    const [isCreatingDemo, setIsCreatingDemo] = useState(false);
+    const [demoServiceId, setDemoServiceId] = useState('');
+    const [demoDescription, setDemoDescription] = useState('');
+    const [demoAssignedEmployee, setDemoAssignedEmployee] = useState('');
+    const [demoAllocationDate, setDemoAllocationDate] = useState(new Date().toISOString().split('T')[0]);
+
     useEffect(() => {
         // Fetch company profile for the letterhead
         getCompanyProfile().then(profile => {
@@ -47,11 +61,19 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
         });
 
         // Subscribe to live quotations
-        const unsub = subscribeToCollection<Quotation>('quotations', (data) => {
+        const unsubQuotations = subscribeToCollection<Quotation>('quotations', (data) => {
             // Sort by newest first
             setQuotations(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
         });
-        return () => unsub();
+
+        const unsubDemos = subscribeToCollection<QuotationDemo>('quotationDemos', (data) => {
+            setDemos(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+        });
+
+        return () => {
+            unsubQuotations();
+            unsubDemos();
+        };
     }, []);
 
     // Derived Data for Dashboard & Filters
@@ -214,6 +236,41 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
             case 'Sent': return 'bg-blue-100 text-blue-700 hover:bg-blue-200';
             case 'Approved': return 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200';
             case 'Rejected': return 'bg-red-100 text-red-700 hover:bg-red-200';
+            default: return 'bg-slate-100 text-slate-600';
+        }
+    };
+
+    const handleDemoStatusChange = async (demo: QuotationDemo, newStatus: QuotationDemo['status']) => {
+        try {
+            await updateQuotationDemoInDB(demo.id, { status: newStatus });
+
+            // Automatically inject into Client DB upon approval if the demo was created for a new lead
+            if (newStatus === 'Approved' && demo.isNewClient) {
+                const exists = clients.some(c => c.mobile === demo.clientPhone || c.name === demo.clientName);
+                if (!exists) {
+                    await addClientToDB({
+                        name: demo.clientName,
+                        companyName: demo.clientName,
+                        mobile: demo.clientPhone || '',
+                        email: demo.clientEmail || '',
+                        serviceEnquired: demo.serviceName,
+                        dateAdded: new Date().toISOString().split('T')[0],
+                        status: 'Active'
+                    });
+                    // Mark as no longer new so it assumes safety if toggled again
+                    await updateQuotationDemoInDB(demo.id, { isNewClient: false });
+                }
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const getDemoStatusColor = (status: string) => {
+        switch (status) {
+            case 'Pending': return 'bg-slate-100 text-slate-600 hover:bg-slate-200';
+            case 'Completed': return 'bg-blue-100 text-blue-700 hover:bg-blue-200';
+            case 'Approved': return 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200';
             default: return 'bg-slate-100 text-slate-600';
         }
     };
@@ -560,185 +617,410 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
         doc.save(`Quotation_${safeName}_${q.quotationNumber}.pdf`);
     };
 
+    const handleSaveDemo = async () => {
+        if (!demoServiceId) return alert("Please select a service.");
+        if (!demoDescription) return alert("Please enter a description for the demo.");
+        if (clientType === 'existing' && !selectedClientId) return alert("Please select a client.");
+        if (clientType === 'new' && !newClientName) return alert("Please enter client name.");
+
+        let finalClientName = '';
+        let finalClientEmail = '';
+        let finalClientPhone = '';
+
+        if (clientType === 'existing') {
+            const c = clients.find(cl => cl.id === selectedClientId);
+            if (c) {
+                finalClientName = c.companyName || c.name;
+                finalClientEmail = c.email;
+                finalClientPhone = c.mobile;
+            }
+        } else {
+            finalClientName = newClientCompany || newClientName;
+            finalClientEmail = newClientEmail;
+            finalClientPhone = newClientPhone;
+        }
+
+        const service = services.find(s => s.id === demoServiceId);
+
+        const newDemo: Omit<QuotationDemo, 'id'> = {
+            clientId: clientType === 'existing' ? selectedClientId : undefined,
+            clientName: finalClientName,
+            clientEmail: finalClientEmail,
+            clientPhone: finalClientPhone,
+            serviceId: demoServiceId,
+            serviceName: service?.name || 'Unknown Service',
+            description: demoDescription,
+            assignedEmployeeId: demoAssignedEmployee,
+            allocatedDate: demoAllocationDate,
+            status: 'Pending',
+            createdAt: new Date().toISOString(),
+            isNewClient: clientType === 'new'
+        };
+
+        try {
+            await addQuotationDemoToDB(newDemo);
+            setIsCreatingDemo(false);
+            setDemoDescription('');
+            setDemoServiceId('');
+            setDemoAssignedEmployee('');
+            setClientType('existing');
+            setSelectedClientId('');
+            setNewClientName('');
+            setNewClientCompany('');
+        } catch (err) {
+            console.error(err);
+            alert("Error saving demo.");
+        }
+    };
+
+    // Derived Data for Demos
+    const filteredDemos = demos.filter(d => {
+        const matchesSearch = (d.clientName || '').toLowerCase().includes(demoSearchTerm.toLowerCase()) ||
+            (d.serviceName || '').toLowerCase().includes(demoSearchTerm.toLowerCase());
+        const matchesStatus = demoStatusFilter === 'All' || d.status === demoStatusFilter;
+        return matchesSearch && matchesStatus;
+    });
+
+    const handleDeleteDemoClick = (id: string) => {
+        if (window.confirm("Are you sure you want to delete this demo?")) {
+            deleteQuotationDemoFromDB(id);
+        }
+    };
+
     // -------------------------------------------------------------------------------- //
     // MAIN APP UI
     // -------------------------------------------------------------------------------- //
     return (
         <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
 
-            {/* Header & Mini Dashboard */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {/* Main Header Card */}
-                <div className="col-span-1 md:col-span-2 flex flex-col sm:flex-row justify-between items-start sm:items-center p-6 md:p-8 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-full blur-3xl -mr-20 -mt-20 opacity-50 pointer-events-none"></div>
-                    <div className="relative z-10">
-                        <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Quotations</h2>
-                        <p className="text-sm font-medium text-slate-500 mt-1 flex items-center gap-2">
-                            <FileText size={16} className="text-blue-500" />
-                            Manage and send professional proposals
-                        </p>
-                    </div>
-
+            {/* Header Settings & Tabs */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="bg-white p-1.5 rounded-2xl shadow-sm border border-slate-100 inline-flex">
                     <button
-                        onClick={() => setIsCreating(true)}
-                        className="relative z-10 inline-flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase tracking-wider hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 hover:shadow-xl hover:shadow-blue-600/40 active:scale-95 group overflow-hidden w-full sm:w-auto justify-center mt-4 sm:mt-0"
+                        onClick={() => setActiveTab('Quotations')}
+                        className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'Quotations' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
+                            }`}
                     >
-                        <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-blue-400/0 via-white/20 to-blue-400/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out"></div>
-                        <Plus size={18} /> Create Quotation
+                        <FileText size={14} /> Quotations
                     </button>
-                </div>
-
-                {/* Dashboard Stats */}
-                <div className="col-span-1 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-6 flex flex-col justify-center relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full blur-2xl -mr-10 -mt-10 opacity-60"></div>
-                    <div className="flex items-center gap-2 text-slate-500 mb-2 relative z-10">
-                        <CheckCircle2 size={16} className="text-emerald-500" />
-                        <span className="text-xs font-black uppercase tracking-widest">Approved</span>
-                    </div>
-                    <p className="text-2xl font-black text-slate-900 relative z-10">₹{totalApproved.toLocaleString()}</p>
-                </div>
-
-                <div className="col-span-1 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-6 flex flex-col justify-center relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 rounded-full blur-2xl -mr-10 -mt-10 opacity-60"></div>
-                    <div className="flex items-center gap-2 text-slate-500 mb-2 relative z-10">
-                        <AlertCircle size={16} className="text-amber-500" />
-                        <span className="text-xs font-black uppercase tracking-widest">Pending</span>
-                    </div>
-                    <p className="text-2xl font-black text-slate-900 relative z-10">₹{totalPending.toLocaleString()}</p>
+                    <button
+                        onClick={() => setActiveTab('Demos')}
+                        className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'Demos' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                    >
+                        <PlaySquare size={14} /> Demos
+                    </button>
                 </div>
             </div>
 
-            {/* Search and Filters Bar */}
-            <div className="flex flex-col sm:flex-row gap-4 w-full">
-                <div className="relative flex-1">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                        <Search className="h-5 w-5 text-slate-400" />
-                    </div>
-                    <input
-                        type="text"
-                        placeholder="Search quotations by number or client name..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="block w-full pl-11 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all"
-                    />
-                </div>
+            {/* Mini Dashboard depending on Tab */}
+            {activeTab === 'Quotations' && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {/* Main Header Card */}
+                    <div className="col-span-1 md:col-span-2 flex flex-col sm:flex-row justify-between items-start sm:items-center p-6 md:p-8 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-full blur-3xl -mr-20 -mt-20 opacity-50 pointer-events-none"></div>
+                        <div className="relative z-10">
+                            <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Quotations</h2>
+                            <p className="text-sm font-medium text-slate-500 mt-1 flex items-center gap-2">
+                                <FileText size={16} className="text-blue-500" />
+                                Manage and send professional proposals
+                            </p>
+                        </div>
 
-                <div className="flex gap-4 sm:w-auto w-full">
-                    <div className="relative flex-1 sm:flex-none">
+                        <button
+                            onClick={() => setIsCreating(true)}
+                            className="relative z-10 inline-flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase tracking-wider hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 hover:shadow-xl hover:shadow-blue-600/40 active:scale-95 group overflow-hidden w-full sm:w-auto justify-center mt-4 sm:mt-0"
+                        >
+                            <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-blue-400/0 via-white/20 to-blue-400/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out"></div>
+                            <Plus size={18} /> Create Quotation
+                        </button>
+                    </div>
+
+
+                    {/* Dashboard Stats */}
+                    <div className="col-span-1 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-6 flex flex-col justify-center relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-full blur-2xl -mr-10 -mt-10 opacity-60"></div>
+                        <div className="flex items-center gap-2 text-slate-500 mb-2 relative z-10">
+                            <CheckCircle2 size={16} className="text-emerald-500" />
+                            <span className="text-xs font-black uppercase tracking-widest">Approved</span>
+                        </div>
+                        <p className="text-2xl font-black text-slate-900 relative z-10">₹{totalApproved.toLocaleString()}</p>
+                    </div>
+
+                    <div className="col-span-1 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 p-6 flex flex-col justify-center relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 rounded-full blur-2xl -mr-10 -mt-10 opacity-60"></div>
+                        <div className="flex items-center gap-2 text-slate-500 mb-2 relative z-10">
+                            <AlertCircle size={16} className="text-amber-500" />
+                            <span className="text-xs font-black uppercase tracking-widest">Pending</span>
+                        </div>
+                        <p className="text-2xl font-black text-slate-900 relative z-10">₹{totalPending.toLocaleString()}</p>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'Demos' && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {/* Main Header Card */}
+                    <div className="col-span-1 md:col-span-4 flex flex-col sm:flex-row justify-between items-start sm:items-center p-6 md:p-8 bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-violet-50 rounded-full blur-3xl -mr-20 -mt-20 opacity-50 pointer-events-none"></div>
+                        <div className="relative z-10">
+                            <h2 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Creative Demos</h2>
+                            <p className="text-sm font-medium text-slate-500 mt-1 flex items-center gap-2">
+                                <PlaySquare size={16} className="text-violet-500" />
+                                Assign and test demo tasks before quoting
+                            </p>
+                        </div>
+
+                        <button
+                            onClick={() => setIsCreatingDemo(true)}
+                            className="relative z-10 inline-flex items-center gap-2 px-6 py-3.5 bg-violet-600 text-white rounded-2xl text-sm font-black uppercase tracking-wider hover:bg-violet-700 transition-all shadow-lg shadow-violet-600/30 hover:shadow-xl hover:shadow-violet-600/40 active:scale-95 group overflow-hidden w-full sm:w-auto justify-center mt-4 sm:mt-0"
+                        >
+                            <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-violet-400/0 via-white/20 to-violet-400/0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-out"></div>
+                            <Plus size={18} /> Create Demo
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Search and Filters Bar */}
+            {activeTab === 'Quotations' ? (
+                <div className="flex flex-col sm:flex-row gap-4 w-full">
+                    <div className="relative flex-1">
                         <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                            <Calendar className="h-4 w-4 text-slate-400" />
+                            <Search className="h-5 w-5 text-slate-400" />
                         </div>
                         <input
-                            type="date"
-                            value={dateFilter}
-                            onChange={(e) => setDateFilter(e.target.value)}
-                            className="block w-full sm:w-40 pl-11 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all uppercase tracking-wider"
+                            type="text"
+                            placeholder="Search quotations by number or client name..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="block w-full pl-11 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all"
                         />
                     </div>
 
-                    <div className="relative flex-1 sm:flex-none">
-                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 z-10">
-                            <Filter className="h-4 w-4" />
+                    <div className="flex gap-4 sm:w-auto w-full">
+                        <div className="relative flex-1 sm:flex-none">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                <Calendar className="h-4 w-4 text-slate-400" />
+                            </div>
+                            <input
+                                type="date"
+                                value={dateFilter}
+                                onChange={(e) => setDateFilter(e.target.value)}
+                                className="block w-full sm:w-40 pl-11 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all uppercase tracking-wider"
+                            />
                         </div>
-                        <select
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            className="block w-full sm:w-40 pl-11 pr-8 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all appearance-none uppercase tracking-wider cursor-pointer"
-                        >
-                            <option value="All">All Status</option>
-                            <option value="Draft">Draft</option>
-                            <option value="Sent">Sent</option>
-                            <option value="Approved">Approved</option>
-                            <option value="Rejected">Rejected</option>
-                        </select>
-                        <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
-                            ▼
+
+                        <div className="relative flex-1 sm:flex-none">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 z-10">
+                                <Filter className="h-4 w-4" />
+                            </div>
+                            <select
+                                value={statusFilter}
+                                onChange={(e) => setStatusFilter(e.target.value)}
+                                className="block w-full sm:w-40 pl-11 pr-8 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all appearance-none uppercase tracking-wider cursor-pointer"
+                            >
+                                <option value="All">All Status</option>
+                                <option value="Draft">Draft</option>
+                                <option value="Sent">Sent</option>
+                                <option value="Approved">Approved</option>
+                                <option value="Rejected">Rejected</option>
+                            </select>
+                            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
+                                ▼
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            ) : (
+                <div className="flex flex-col sm:flex-row gap-4 w-full">
+                    <div className="relative flex-1">
+                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <Search className="h-5 w-5 text-slate-400" />
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Search demos by client or service..."
+                            value={demoSearchTerm}
+                            onChange={(e) => setDemoSearchTerm(e.target.value)}
+                            className="block w-full pl-11 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-violet-500 outline-none shadow-sm transition-all"
+                        />
+                    </div>
+
+                    <div className="flex gap-4 sm:w-auto w-full">
+                        <div className="relative flex-1 sm:flex-none">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 z-10">
+                                <Filter className="h-4 w-4" />
+                            </div>
+                            <select
+                                value={demoStatusFilter}
+                                onChange={(e) => setDemoStatusFilter(e.target.value)}
+                                className="block w-full sm:w-40 pl-11 pr-8 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-violet-500 outline-none shadow-sm transition-all appearance-none uppercase tracking-wider cursor-pointer"
+                            >
+                                <option value="All">All Status</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Completed">Completed</option>
+                                <option value="Approved">Approved</option>
+                            </select>
+                            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
+                                ▼
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* List View */}
-            <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em]">
-                                <th className="px-8 py-5">Quote No</th>
-                                <th className="px-8 py-5">Client Name</th>
-                                <th className="px-8 py-5">Date</th>
-                                <th className="px-8 py-5">Amount</th>
-                                <th className="px-8 py-5">Status</th>
-                                <th className="px-8 py-5 text-right flex-shrink-0">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50">
-                            {filteredQuotations.map(q => (
-                                <tr key={q.id} className="hover:bg-slate-50/80 transition-all duration-300 group">
-                                    <td className="px-8 py-5">
-                                        <span className="text-xs font-bold text-slate-700">{q.quotationNumber}</span>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <div className="flex flex-col">
-                                            <span className="font-black text-slate-800 text-sm">{q.clientName}</span>
-                                            {q.isNewClient && <span className="text-[9px] font-bold uppercase tracking-wider text-blue-500 mt-0.5 border border-blue-200 bg-blue-50 w-fit px-1.5 rounded">New Client</span>}
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <span className="text-xs font-medium text-slate-500">{new Date(q.issueDate).toLocaleDateString('en-GB')}</span>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <span className="text-sm font-black text-slate-900">₹{q.totalAmount.toLocaleString()}</span>
-                                    </td>
-                                    <td className="px-8 py-5">
-                                        <div className={`relative inline-flex items-center justify-center`}>
-                                            <select
-                                                value={q.status}
-                                                onChange={(e) => handleStatusChange(q, e.target.value as Quotation['status'])}
-                                                className={`text-[10px] font-black uppercase tracking-wider pl-4 pr-8 py-2 rounded-xl border border-slate-200 outline-none cursor-pointer appearance-none text-center transition-all ${getStatusColor(q.status)}`}
-                                            >
-                                                <option value="Draft">Draft</option>
-                                                <option value="Sent">Sent</option>
-                                                <option value="Approved">Approved</option>
-                                                <option value="Rejected">Rejected</option>
-                                            </select>
-                                            <div className="absolute z-10 right-3 pointer-events-none text-current opacity-70">
-                                                ▼
+            {activeTab === 'Quotations' && (
+                <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em]">
+                                    <th className="px-8 py-5">Quote No</th>
+                                    <th className="px-8 py-5">Client Name</th>
+                                    <th className="px-8 py-5">Date</th>
+                                    <th className="px-8 py-5">Amount</th>
+                                    <th className="px-8 py-5">Status</th>
+                                    <th className="px-8 py-5 text-right flex-shrink-0">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {filteredQuotations.map(q => (
+                                    <tr key={q.id} className="hover:bg-slate-50/80 transition-all duration-300 group">
+                                        <td className="px-8 py-5">
+                                            <span className="text-xs font-bold text-slate-700">{q.quotationNumber}</span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <div className="flex flex-col">
+                                                <span className="font-black text-slate-800 text-sm">{q.clientName}</span>
+                                                {q.isNewClient && <span className="text-[9px] font-bold uppercase tracking-wider text-blue-500 mt-0.5 border border-blue-200 bg-blue-50 w-fit px-1.5 rounded">New Client</span>}
                                             </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-8 py-5 text-right flex justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            onClick={() => generateQuotationPDF(q)}
-                                            className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm active:scale-95 border border-blue-100 hover:border-blue-600 flex items-center justify-center"
-                                            title="Export Direct PDF"
-                                        >
-                                            <Download size={14} className="stroke-[2.5]" />
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteClick(q.id)}
-                                            className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-95 border border-red-100 hover:border-red-600 flex items-center justify-center"
-                                            title="Delete Quotation"
-                                        >
-                                            <Trash2 size={14} className="stroke-[2.5]" />
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                            {filteredQuotations.length === 0 && (
-                                <tr>
-                                    <td colSpan={6} className="py-24 text-center text-slate-400">
-                                        <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                                            <FileSignature size={32} className="opacity-20" />
-                                        </div>
-                                        <p className="font-black text-xs uppercase tracking-[0.3em]">No quotations found</p>
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <span className="text-xs font-medium text-slate-500">{new Date(q.issueDate).toLocaleDateString('en-GB')}</span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <span className="text-sm font-black text-slate-900">₹{q.totalAmount.toLocaleString()}</span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <div className={`relative inline-flex items-center justify-center`}>
+                                                <select
+                                                    value={q.status}
+                                                    onChange={(e) => handleStatusChange(q, e.target.value as Quotation['status'])}
+                                                    className={`text-[10px] font-black uppercase tracking-wider pl-4 pr-8 py-2 rounded-xl border border-slate-200 outline-none cursor-pointer appearance-none text-center transition-all ${getStatusColor(q.status)}`}
+                                                >
+                                                    <option value="Draft">Draft</option>
+                                                    <option value="Sent">Sent</option>
+                                                    <option value="Approved">Approved</option>
+                                                    <option value="Rejected">Rejected</option>
+                                                </select>
+                                                <div className="absolute z-10 right-3 pointer-events-none text-current opacity-70">
+                                                    ▼
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 text-right flex justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => generateQuotationPDF(q)}
+                                                className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm active:scale-95 border border-blue-100 hover:border-blue-600 flex items-center justify-center"
+                                                title="Export Direct PDF"
+                                            >
+                                                <Download size={14} className="stroke-[2.5]" />
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteClick(q.id)}
+                                                className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-95 border border-red-100 hover:border-red-600 flex items-center justify-center"
+                                                title="Delete Quotation"
+                                            >
+                                                <Trash2 size={14} className="stroke-[2.5]" />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredQuotations.length === 0 && (
+                                    <tr>
+                                        <td colSpan={6} className="text-center py-12 text-slate-500 font-medium">No quotations found matching your criteria.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
+            )}
+
+            {/* Demos List View */}
+            {activeTab === 'Demos' && (
+                <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-200/40 overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.25em]">
+                                    <th className="px-8 py-5">Client Name</th>
+                                    <th className="px-8 py-5">Service</th>
+                                    <th className="px-8 py-5">Allocated On</th>
+                                    <th className="px-8 py-5">Employee</th>
+                                    <th className="px-8 py-5">Status</th>
+                                    <th className="px-8 py-5 text-right flex-shrink-0">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {filteredDemos.map(d => (
+                                    <tr key={d.id} className="hover:bg-slate-50/80 transition-all duration-300 group">
+                                        <td className="px-8 py-5">
+                                            <div className="flex flex-col">
+                                                <span className="font-black text-slate-800 text-sm">{d.clientName}</span>
+                                                {d.isNewClient && <span className="text-[9px] font-bold uppercase tracking-wider text-violet-500 mt-0.5 border border-violet-200 bg-violet-50 w-fit px-1.5 rounded">New Client</span>}
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <span className="text-xs font-bold text-slate-700">{d.serviceName}</span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <span className="text-xs font-medium text-slate-500">{new Date(d.allocatedDate).toLocaleDateString('en-GB')}</span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <span className="text-xs font-medium text-slate-500">
+                                                {employees.find(e => e.id === d.assignedEmployeeId)?.name || 'Unassigned'}
+                                            </span>
+                                        </td>
+                                        <td className="px-8 py-5">
+                                            <div className={`relative inline-flex items-center justify-center`}>
+                                                <select
+                                                    value={d.status}
+                                                    onChange={(e) => handleDemoStatusChange(d, e.target.value as QuotationDemo['status'])}
+                                                    className={`text-[10px] font-black uppercase tracking-wider pl-4 pr-8 py-2 rounded-xl border border-slate-200 outline-none cursor-pointer appearance-none text-center transition-all ${getDemoStatusColor(d.status)}`}
+                                                >
+                                                    <option value="Pending">Pending</option>
+                                                    <option value="Completed">Completed</option>
+                                                    <option value="Approved">Approved</option>
+                                                </select>
+                                                <div className="absolute z-10 right-3 pointer-events-none text-current opacity-70">
+                                                    ▼
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-8 py-5 text-right flex justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={() => handleDeleteDemoClick(d.id)}
+                                                className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-95 border border-red-100 hover:border-red-600 flex items-center justify-center"
+                                                title="Delete Demo"
+                                            >
+                                                <Trash2 size={14} className="stroke-[2.5]" />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredDemos.length === 0 && (
+                                    <tr>
+                                        <td colSpan={6} className="text-center py-12 text-slate-500 font-medium">No demos found matching your criteria.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
 
             {/* CREATE QUOTATION MODAL */}
             {
@@ -986,36 +1268,200 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services }) => {
                     </div>
                 )}
 
-            {/* DELETE CONFIRMATION MODAL */}
-            {deletingQuotationId && (
-                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="p-6 text-center">
-                            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
-                                <AlertCircle size={32} className="text-red-500" />
+            {/* CREATE DEMO MODAL */}
+            {
+                isCreatingDemo && (
+                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-300">
+                            {/* Header */}
+                            <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-violet-600">
+                                <div>
+                                    <h2 className="text-xl font-black text-white">Create Creative Demo</h2>
+                                    <p className="text-violet-200 text-xs font-medium mt-0.5">Assign sample work before quoting</p>
+                                </div>
+                                <button onClick={() => setIsCreatingDemo(false)} className="text-violet-200 hover:text-white hover:bg-violet-500 p-2 rounded-xl transition-all">
+                                    <X size={20} />
+                                </button>
                             </div>
-                            <h3 className="text-lg font-black text-slate-900 mb-2">Delete Quotation?</h3>
-                            <p className="text-sm text-slate-500 font-medium">This action cannot be undone. Are you sure you want to permanently delete this quotation?</p>
-                        </div>
-                        <div className="p-4 grid grid-cols-2 gap-3 bg-slate-50 border-t border-slate-100">
-                            <button
-                                onClick={() => setDeletingQuotationId(null)}
-                                className="py-2.5 font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 hover:text-slate-900 rounded-xl transition-all text-xs uppercase tracking-wider"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={confirmDelete}
-                                className="py-2.5 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-wider hover:bg-red-700 transition-all shadow-md flex items-center justify-center gap-2"
-                            >
-                                <Trash2 size={16} /> Delete
-                            </button>
+
+                            {/* Body - Scrollable */}
+                            <div className="p-6 overflow-y-auto flex-1 custom-scrollbar space-y-6 bg-slate-50/50">
+
+                                {/* Client Setup (Mirrors Quotation) */}
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                                    <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setClientType('existing')}
+                                            className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${clientType === 'existing' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
+                                        >
+                                            Existing Client
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setClientType('new')}
+                                            className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${clientType === 'new' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:bg-slate-200'}`}
+                                        >
+                                            New Client <span className="text-[8px] bg-violet-100 text-violet-600 px-1 py-0.5 rounded ml-1">TEST</span>
+                                        </button>
+                                    </div>
+
+                                    {clientType === 'existing' ? (
+                                        <div>
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Existing Client</label>
+                                            <select
+                                                value={selectedClientId}
+                                                onChange={(e) => setSelectedClientId(e.target.value)}
+                                                className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium"
+                                            >
+                                                <option value="">-- Choose Client --</option>
+                                                {clients.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.companyName || c.name} {c.mobile ? `(${c.mobile})` : ''}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Client / Company Name *</label>
+                                                <input
+                                                    value={newClientName}
+                                                    onChange={(e) => setNewClientName(e.target.value)}
+                                                    placeholder="e.g. Acme Corp"
+                                                    className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium"
+                                                />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Phone</label>
+                                                    <input
+                                                        value={newClientPhone}
+                                                        onChange={(e) => setNewClientPhone(e.target.value)}
+                                                        placeholder="+91..."
+                                                        className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Email</label>
+                                                    <input
+                                                        value={newClientEmail}
+                                                        onChange={(e) => setNewClientEmail(e.target.value)}
+                                                        placeholder="contact@email.com"
+                                                        className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Demo Details */}
+                                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                                    <div>
+                                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Service Required *</label>
+                                        <select
+                                            value={demoServiceId}
+                                            onChange={(e) => setDemoServiceId(e.target.value)}
+                                            className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium"
+                                        >
+                                            <option value="">-- Choose Service --</option>
+                                            {services.map(s => (
+                                                <option key={s.id} value={s.id}>{s.name} ({s.category})</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Demo Description / Requirements *</label>
+                                        <textarea
+                                            value={demoDescription}
+                                            onChange={(e) => setDemoDescription(e.target.value)}
+                                            placeholder="Detailed description of what needs to be designed/developed..."
+                                            rows={4}
+                                            className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium resize-none"
+                                        />
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Assign To</label>
+                                            <select
+                                                value={demoAssignedEmployee}
+                                                onChange={(e) => setDemoAssignedEmployee(e.target.value)}
+                                                className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-medium"
+                                            >
+                                                <option value="">-- Any Employee --</option>
+                                                {employees.filter(e => e.role === 'employee').map(e => (
+                                                    <option key={e.id} value={e.id}>{e.name} ({e.department})</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Allocated Date</label>
+                                            <input
+                                                type="date"
+                                                value={demoAllocationDate}
+                                                onChange={(e) => setDemoAllocationDate(e.target.value)}
+                                                className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-violet-500 outline-none transition-all text-sm font-bold text-slate-600 uppercase tracking-wider"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Footer */}
+                            <div className="p-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCreatingDemo(false)}
+                                    className="px-6 py-2.5 font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition-all text-xs uppercase tracking-wider"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSaveDemo}
+                                    className="px-6 py-2.5 bg-violet-600 text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-violet-700 transition-all shadow-md flex items-center gap-2"
+                                >
+                                    <PlaySquare size={16} /> Init Demo
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
-        </div>
+            {/* DELETE CONFIRMATION MODAL */}
+            {
+                deletingQuotationId && (
+                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                            <div className="p-6 text-center">
+                                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-100">
+                                    <AlertCircle size={32} className="text-red-500" />
+                                </div>
+                                <h3 className="text-lg font-black text-slate-900 mb-2">Delete Quotation?</h3>
+                                <p className="text-sm text-slate-500 font-medium">This action cannot be undone. Are you sure you want to permanently delete this quotation?</p>
+                            </div>
+                            <div className="p-4 grid grid-cols-2 gap-3 bg-slate-50 border-t border-slate-100">
+                                <button
+                                    onClick={() => setDeletingQuotationId(null)}
+                                    className="py-2.5 font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 hover:text-slate-900 rounded-xl transition-all text-xs uppercase tracking-wider"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmDelete}
+                                    className="py-2.5 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-wider hover:bg-red-700 transition-all shadow-md flex items-center justify-center gap-2"
+                                >
+                                    <Trash2 size={16} /> Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 };
 

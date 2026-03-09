@@ -564,3 +564,81 @@ export const deleteInboundSuppressedLeadFromDB = async (id: string) => {
     try { await deleteDoc(doc(db, "inboundSuppressionList", id)); }
     catch (e) { console.error("Error deleting inbound suppressed lead:", e); }
 };
+
+// --- Manual Tasks (Employee-Created) ---
+export const addManualTaskToDB = async (task: any) => {
+    try {
+        const docRef = await addDoc(collection(db, "manualTasks"), task);
+        return docRef.id;
+    } catch (e) {
+        console.error("Error adding manual task: ", e);
+    }
+};
+
+export const updateManualTaskInDB = async (id: string, updates: any) => {
+    try {
+        await updateDoc(doc(db, "manualTasks", id), updates);
+    } catch (e) {
+        console.error("Error updating manual task: ", e);
+    }
+};
+
+export const deleteManualTaskFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "manualTasks", id));
+    } catch (e) {
+        console.error("Error deleting manual task: ", e);
+    }
+};
+
+// --- Employee Notifications (for Admin Panel) ---
+export const addEmployeeNotificationToDB = async (notif: any) => {
+    try {
+        const docRef = await addDoc(collection(db, "employeeNotifications"), notif);
+        return docRef.id;
+    } catch (e) {
+        console.error("Error adding employee notification: ", e);
+    }
+};
+
+export const updateEmployeeNotificationInDB = async (id: string, updates: any) => {
+    try {
+        await updateDoc(doc(db, "employeeNotifications", id), updates);
+    } catch (e) {
+        console.error("Error updating employee notification: ", e);
+    }
+};
+
+export const deleteEmployeeNotificationFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "employeeNotifications", id));
+    } catch (e) {
+        console.error("Error deleting employee notification: ", e);
+    }
+};
+
+// --- Quotation Demos ---
+export const addQuotationDemoToDB = async (demo: any) => {
+    try {
+        const docRef = await addDoc(collection(db, "quotationDemos"), demo);
+        return docRef.id;
+    } catch (e) {
+        console.error("Error adding quotation demo: ", e);
+    }
+};
+
+export const updateQuotationDemoInDB = async (id: string, updates: any) => {
+    try {
+        await updateDoc(doc(db, "quotationDemos", id), updates);
+    } catch (e) {
+        console.error("Error updating quotation demo: ", e);
+    }
+};
+
+export const deleteQuotationDemoFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "quotationDemos", id));
+    } catch (e) {
+        console.error("Error deleting quotation demo: ", e);
+    }
+};

@@ -65,13 +65,6 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
   // --- Package State ---
   const [showPackageModal, setShowPackageModal] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-
-  // --- Package List Filters ---
-  const [pkgStatusFilter, setPkgStatusFilter] = useState<'all' | 'active' | 'finished'>('all');
-  const [pkgClientFilter, setPkgClientFilter] = useState<string>('all');
-  const [pkgPaymentFilter, setPkgPaymentFilter] = useState<'all' | 'due' | 'cleared'>('all');
-  const [expandedPkgs, setExpandedPkgs] = useState<Record<string, boolean>>({}); // Toggle state for package details
-
   const [selectedClientForHistory, setSelectedClientForHistory] = useState<string>('');
   const [newPackage, setNewPackage] = useState({
     clientId: '',
@@ -1325,297 +1318,196 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
 
       {/* === PACKAGES TAB === */}
       {activeGraphicsTab === 'packages' && (() => {
-        // Apply filters
-        let filteredPkgs = packages;
+        // Filter packages based on the current period selection
+        // Active packages ALWAY bypass the date filter (so they don't disappear)
+        const filteredPackages = packages.filter(p => {
+          if (p.status === 'active') return true;
 
-        if (pkgClientFilter !== 'all') {
-          filteredPkgs = filteredPkgs.filter(p => p.clientId === pkgClientFilter);
-        }
-        if (pkgStatusFilter !== 'all') {
-          filteredPkgs = filteredPkgs.filter(p => p.status === pkgStatusFilter);
-        }
-        if (pkgPaymentFilter !== 'all') {
-          filteredPkgs = filteredPkgs.filter(pkg => {
-            const balance = pkg.totalAmount - pkg.receivedAmount;
-            const hasDueMilestone = pkg.paymentMilestones.some(m => m.status === 'due');
-            const isOverdue = (pkg.status === 'finished' && balance > 0) || hasDueMilestone;
+          if (selectedMonth === 'all') return true;
+          const pkgDate = new Date(p.createdAt || '');
+          if (isNaN(pkgDate.getTime())) return false; // Hide invalid dates if specific filter is set
 
-            if (pkgPaymentFilter === 'due') return isOverdue;
-            if (pkgPaymentFilter === 'cleared') return balance <= 0 && !hasDueMilestone;
-            return true;
+          if (selectedMonth === 'custom') {
+            if (!customDateRange.start || !customDateRange.end) return true;
+            const start = new Date(customDateRange.start);
+            const end = new Date(customDateRange.end);
+            end.setHours(23, 59, 59, 999);
+            return pkgDate >= start && pkgDate <= end;
+          }
+          if (selectedMonth === 'specific') {
+            if (!specificDate) return true;
+            return pkgDate.toISOString().split('T')[0] === specificDate;
+          }
+          return pkgDate.getMonth() === selectedMonth;
+        });
+
+        const activePkgs = packages
+          .filter(p => p.status === 'active')
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt || 0).getTime();
+            const dateB = new Date(b.createdAt || 0).getTime();
+            return isNaN(dateA) || isNaN(dateB) ? 0 : dateB - dateA;
           });
-        }
 
-        // Sort newest first
-        filteredPkgs = filteredPkgs.sort((a, b) => new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime());
+        const finishedPkgs = filteredPackages
+          .filter(p => p.status === 'completed')
+          .sort((a, b) => {
+            const dateA = new Date(a.createdAt || 0).getTime();
+            const dateB = new Date(b.createdAt || 0).getTime();
+            return isNaN(dateA) || isNaN(dateB) ? 0 : dateB - dateA;
+          });
+        const totalValue = activePkgs.reduce((s, p) => s + p.totalAmount, 0);
 
-        const activePkgsList = filteredPkgs.filter(p => p.status === 'active');
-        const finishedPkgsList = filteredPkgs.filter(p => p.status !== 'active');
-
-        const renderPkgCard = (pkg: Package, isFinishedView: boolean = false) => {
-          const client = clients.find(c => c.id === pkg.clientId);
-          const progress = getPackageProgress(pkg);
-          const pkgTasks = projects.filter(t => t.packageId === pkg.id).sort((a, b) => (a.createdAt || a.startDate).localeCompare(b.createdAt || b.startDate));
-
-          // Financials & Balance Logic
-          const balance = pkg.totalAmount - pkg.receivedAmount;
-          const hasDueMilestone = pkg.paymentMilestones.some(m => m.status === 'due');
-          const isOverdue = (pkg.status === 'completed' && balance > 0) || hasDueMilestone;
-          const isCleared = balance <= 0;
-
-          const isExpanded = expandedPkgs[pkg.id] || false;
-          const toggleExpanded = () => setExpandedPkgs(prev => ({ ...prev, [pkg.id]: !prev[pkg.id] }));
-
-          return (
-            <div key={pkg.id} className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col group relative overflow-hidden ${isFinishedView ? 'border-slate-100 opacity-[0.65] saturate-[0.6] hover:opacity-100 hover:saturate-100 shadow-sm hover:shadow-md' : 'border-slate-200/70 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:shadow-md'}`}>
-              {/* Active/Finished Edge Indicator */}
-              {pkg.status === 'active' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-400"></div>}
-              {pkg.status !== 'active' && <div className="absolute left-0 top-0 bottom-0 w-1 bg-slate-300"></div>}
-
-              <div className="p-4 sm:p-5 flex flex-col xl:flex-row gap-5 items-start xl:items-center justify-between">
-                {/* Left: Info */}
-                <div className="flex-1 min-w-0 flex flex-col pl-1 sm:pl-2">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase border 
-                      ${pkg.status === 'active' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
-                      {pkg.status}
-                    </span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border ${isFinishedView ? 'bg-white text-slate-400 border-slate-100' : 'text-slate-500 bg-slate-50 border-slate-100'}`}>{pkg.period}</span>
-                    <span className="text-slate-300 mx-1">•</span>
-                    <span className={`text-[11px] font-bold truncate ${isFinishedView ? 'text-slate-500 hover:text-violet-600' : 'text-violet-600'}`}>{client?.name || pkg.clientName}</span>
-                    {client?.companyName && <span className="text-[10px] text-slate-400 truncate hidden sm:inline">({client.companyName})</span>}
-                  </div>
-
-                  <div className="flex items-center gap-3 mb-3">
-                    <h4 className={`font-bold text-[15px] sm:text-base truncate leading-tight transition-colors ${isFinishedView ? 'text-slate-600 group-hover:text-slate-900' : 'text-slate-900 group-hover:text-violet-600'}`}>{pkg.packageName}</h4>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openEditPackage(pkg); }}
-                      className="p-1 px-2 border rounded-md text-[10px] uppercase font-bold text-slate-400 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 transition-all opacity-0 group-hover:opacity-100"
-                      title="Edit Package"
-                    >
-                      Edit
-                    </button>
-                  </div>
-
-                  {/* Deliverables summary */}
-                  <div className="flex flex-wrap gap-2">
-                    {pkg.lineItems.map((li, idx) => {
-                      const done = getLineItemDone(pkg.id, idx);
-                      const isComplete = done >= li.quantity;
-                      return (
-                        <div key={idx} className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[9px] sm:text-[10px] font-semibold border 
-                          ${isComplete ? (isFinishedView ? 'bg-slate-50 text-slate-500 border-slate-200' : 'bg-emerald-50 text-emerald-700 border-emerald-100') : 'bg-white text-slate-600 border-slate-200'}`}>
-                          <span className="truncate max-w-[120px]">{li.serviceName}</span>
-                          <span className={`px-1 rounded bg-slate-100 ${isComplete && !isFinishedView ? 'text-emerald-700' : 'text-slate-500'}`}>{done}/{li.quantity}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Right: Financials */}
-                <div className={`flex flex-wrap sm:flex-nowrap items-center gap-4 xl:gap-6 p-3 sm:p-4 rounded-xl border shrink-0 w-full xl:w-auto mt-2 xl:mt-0 ${isFinishedView ? 'bg-white border-slate-100/50' : 'bg-slate-50/70 border-slate-100'}`}>
-                  <div className="flex flex-col min-w-[70px]">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Value</span>
-                    <span className={`text-xs sm:text-sm font-bold ${isFinishedView ? 'text-slate-600' : 'text-slate-800'}`}>₹{pkg.totalAmount.toLocaleString()}</span>
-                  </div>
-                  <div className="flex flex-col min-w-[70px]">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Paid</span>
-                    <span className={`text-xs sm:text-sm font-bold ${isFinishedView ? 'text-slate-500' : 'text-emerald-600'}`}>₹{pkg.receivedAmount.toLocaleString()}</span>
-                  </div>
-                  <div className="flex flex-col min-w-[90px]">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Balance</span>
-                    {isCleared ? (
-                      <span className={`text-xs sm:text-sm font-bold flex items-center gap-1 ${isFinishedView ? 'text-slate-400' : 'text-emerald-600'}`}><CheckCircle size={12} /> Cleared</span>
-                    ) : (
-                      <span className={`text-xs sm:text-sm font-bold flex items-center gap-1 ${isOverdue ? 'text-red-600' : (isFinishedView ? 'text-slate-600' : 'text-slate-800')}`}>
-                        ₹{balance.toLocaleString()}
-                        {isOverdue && <span className="text-[8px] uppercase bg-red-100 text-red-600 px-1 py-0.5 rounded tracking-wider animate-pulse">Due</span>}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="w-px h-8 bg-slate-200 mx-2 hidden sm:block"></div>
-
-                  <div className="flex flex-col items-center min-w-[50px] ml-auto sm:ml-0">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">{progress}%</span>
-                    <div className="w-12 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${isFinishedView ? 'bg-slate-300 group-hover:bg-violet-400' : 'bg-violet-500'}`} style={{ width: `${progress}%` }}></div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setPdfDownloadPkg(pkg)}
-                    className={`p-2 sm:px-3 sm:py-2 rounded-lg border shadow-sm ml-2 flex items-center gap-1.5 transition-colors ${isFinishedView ? 'bg-slate-50 border-slate-200 text-slate-500 hover:text-violet-600 hover:bg-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-violet-600'
-                      }`}
-                    title="Download Report"
-                  >
-                    <Download size={14} />
-                    <span className="hidden sm:inline text-[9px] font-bold uppercase tracking-wider">PDF</span>
-                  </button>
-
-                  {(pkg.paymentMilestones.length > 0 || pkgTasks.length > 0) && (
-                    <button
-                      onClick={toggleExpanded}
-                      className={`p-2 sm:px-3 sm:py-2 rounded-lg flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider transition-colors border shadow-sm
-                        ${isExpanded ? 'bg-slate-100 border-slate-200 text-slate-700' : (isFinishedView ? 'bg-slate-50 border-slate-200 text-slate-500 hover:text-violet-600' : 'bg-white border-slate-200 text-violet-600 hover:bg-violet-50 hover:border-violet-200')}`}
-                    >
-                      <span className="hidden sm:inline">{isExpanded ? 'Hide Details' : 'View Details'}</span>
-                      <ChevronDown size={14} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Bottom: Milestones & Tasks inside an accordion or compact list */}
-              {isExpanded && (pkg.paymentMilestones.length > 0 || pkgTasks.length > 0) && (
-                <div className={`bg-slate-50/50 border-t flex flex-col w-full text-[10px] animate-in slide-in-from-top-2 duration-200 ${isFinishedView ? 'border-slate-100/30' : 'border-slate-100'}`}>
-
-                  {/* Milestones row */}
-                  {pkg.paymentMilestones.length > 0 && (
-                    <div className="px-5 py-2.5 flex items-center gap-3 overflow-x-auto custom-scrollbar border-b border-slate-100/50">
-                      <span className="font-bold text-slate-400 uppercase tracking-wider shrink-0">Milestones:</span>
-                      <div className="flex gap-3 shrink-0">
-                        {pkg.paymentMilestones.map((m, idx) => (
-                          <div key={idx} className="flex items-center">
-                            <span className={`flex items-center gap-1 font-semibold ${m.status === 'received' ? (isFinishedView ? 'text-emerald-500' : 'text-emerald-600') : m.status === 'due' ? 'text-red-500' : 'text-slate-500'}`}>
-                              {m.status === 'received' ? <CheckCircle size={10} /> : m.status === 'due' ? <AlertTriangle size={10} /> : <Clock size={10} />}
-                              {m.label} <span className="text-slate-400 font-medium ml-0.5">₹{m.amountDue.toLocaleString()}</span>
-                            </span>
-                            {idx < pkg.paymentMilestones.length - 1 && <span className="text-slate-300 ml-3 shrink-0">•</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Linked Tasks grid */}
-                  {pkgTasks.length > 0 && (
-                    <div className="px-5 py-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-bold text-slate-400 uppercase tracking-wider">Linked Deliverables</span>
-                        <span className="text-[9px] font-bold text-slate-400 bg-white px-2 py-0.5 rounded border border-slate-200">{pkgTasks.length} Task(s)</span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                        {pkgTasks.map((task, taskIdx) => (
-                          <div key={task.id} className="bg-white px-3 py-2 rounded-lg border border-slate-200/60 flex items-center justify-between gap-3 shadow-sm hover:border-slate-300 transition-colors">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-[9px] font-bold text-slate-300 shrink-0 w-3">{taskIdx + 1}.</span>
-                              <div className="flex flex-col min-w-0">
-                                <span className="font-semibold text-slate-700 truncate">{task.serviceName}</span>
-                                {(task as any).deliveryFileName ? (
-                                  <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5 truncate">
-                                    <LinkIcon size={10} className="shrink-0" /> <span className="truncate">{(task as any).deliveryFileName}</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] text-slate-400 truncate mt-0.5">{task.description?.substring(0, 35) || '-'}</span>
-                                )}
-                              </div>
-                            </div>
-                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold tracking-wider uppercase shrink-0
-                                ${task.status === 'Finished' || task.status === 'Completed' || task.status === 'Closed' ? 'bg-emerald-50 text-emerald-700' :
-                                task.status === 'Working' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>
-                              {task.status}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        };
         return (
           <div className="space-y-6">
-            <div className="flex justify-between items-center bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
-              <div className="flex gap-2 w-full lg:w-auto overflow-x-auto custom-scrollbar">
-                {/* Client Filter */}
-                <div className="relative min-w-[150px]">
-                  <select
-                    value={pkgClientFilter}
-                    onChange={(e) => setPkgClientFilter(e.target.value)}
-                    className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest py-2.5 pl-4 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
-                  >
-                    <option value="all">All Clients</option>
-                    {clientsWithPackages.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+            {/* Package Stats & Controls */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-center">
+              <div className="xl:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-violet-600 px-8 py-6 rounded-[2rem] text-white shadow-xl shadow-violet-600/20 relative overflow-hidden group hover:scale-[1.02] transition-transform">
+                  <h4 className="text-[10px] font-black opacity-80 uppercase tracking-widest relative z-10">Active Packages</h4>
+                  <p className="text-4xl font-black relative z-10 mt-2">{activePkgs.length}</p>
+                  <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
                 </div>
-
-                {/* Status Filter */}
-                <div className="relative min-w-[130px]">
-                  <select
-                    value={pkgStatusFilter}
-                    onChange={(e) => setPkgStatusFilter(e.target.value as any)}
-                    className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest py-2.5 pl-4 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
-                  >
-                    <option value="all">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="finished">Finished</option>
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                <div className="bg-white px-8 py-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-violet-100 transition-colors group">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Package Value</h4>
+                  <p className="text-3xl font-black text-slate-900 tracking-tight group-hover:text-violet-600 transition-colors">₹{totalValue.toLocaleString()}</p>
                 </div>
-
-                {/* Payment Filter */}
-                <div className="relative min-w-[150px]">
-                  <select
-                    value={pkgPaymentFilter}
-                    onChange={(e) => setPkgPaymentFilter(e.target.value as any)}
-                    className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest py-2.5 pl-4 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
-                  >
-                    <option value="all">All Payments</option>
-                    <option value="due">Balance Due 🔴</option>
-                    <option value="cleared">Cleared ✅</option>
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                <div className="bg-white px-8 py-6 rounded-[2rem] border border-slate-100 shadow-sm hover:border-emerald-100 transition-colors group">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Finished Packages</h4>
+                  <p className="text-3xl font-black text-slate-900 tracking-tight group-hover:text-emerald-600 transition-colors">{finishedPkgs.length}</p>
                 </div>
               </div>
-              <button
-                onClick={() => setShowPackageModal(true)}
-                className="hidden lg:flex bg-violet-600 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest items-center justify-center gap-2 hover:bg-violet-700 transition-all shadow-md shadow-violet-600/20"
-              >
-                <Plus size={16} strokeWidth={3} />
-                <span>New Package</span>
-              </button>
+
+              <div className="xl:col-span-4 flex justify-end">
+                <button
+                  onClick={() => setShowPackageModal(true)}
+                  className="bg-violet-600 text-white px-6 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.1em] flex items-center justify-center gap-3 hover:bg-violet-700 transition-all shadow-lg shadow-violet-600/20 active:scale-95"
+                >
+                  <Plus size={20} className="stroke-[3]" />
+                  <span>New Package</span>
+                </button>
+              </div>
             </div>
 
-            {/* Package List */}
+            {/* Active Packages List */}
             <div className="space-y-4">
-              {filteredPkgs.length === 0 ? (
+              {activePkgs.length === 0 ? (
                 <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl py-24 text-center">
                   <div className="w-16 h-16 bg-violet-50 rounded-full flex items-center justify-center mx-auto mb-4">
                     <PackageIcon size={32} className="text-violet-300" />
                   </div>
-                  <p className="font-black text-xs uppercase tracking-[0.3em] text-slate-400">No packages found</p>
-                  <p className="text-[10px] text-slate-300 mt-2 font-medium">Try adjusting your filters</p>
+                  <p className="font-black text-xs uppercase tracking-[0.3em] text-slate-400">No active packages</p>
+                  <p className="text-[10px] text-slate-300 mt-2 font-medium">Create a package to get started</p>
                 </div>
               ) : (
-                <>
-                  {activePkgsList.length > 0 && (
-                    <div className="space-y-4">
-                      {activePkgsList.map(pkg => renderPkgCard(pkg, false))}
-                    </div>
-                  )}
+                activePkgs.map(pkg => {
+                  const progress = getPackageProgress(pkg);
+                  const totalQty = pkg.lineItems.reduce((s, li) => s + li.quantity, 0);
+                  const totalDone = getPackageTotalDone(pkg);
+                  return (
+                    <div key={pkg.id} className="bg-white rounded-[2rem] border border-slate-100 shadow-lg p-6 hover:shadow-xl transition-all">
+                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-1">
+                            <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-violet-50 text-violet-700 border border-violet-200">📦 {pkg.period}</span>
+                            <span className="px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Active</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEditPackage(pkg); }}
+                              className="ml-1 p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-xl transition-all"
+                              title="Edit Package"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
+                              className="ml-auto p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                              title="Delete Package"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                          <h4 className="font-black text-slate-900 text-xl tracking-tight mt-2">{pkg.clientName}</h4>
+                          <p className="text-sm font-bold text-slate-500">{pkg.packageName}</p>
 
-                  {finishedPkgsList.length > 0 && (
-                    <div className="pt-8 pb-4 mt-4">
-                      <h3 className="font-black text-[11px] uppercase tracking-[0.2em] text-slate-400 mb-5 flex items-center gap-3">
-                        <CheckCircle size={16} className="text-slate-300" />
-                        Finished Packages
-                        <div className="h-px bg-slate-200 flex-1 ml-2"></div>
-                      </h3>
-                      <div className="space-y-3">
-                        {finishedPkgsList.map(pkg => renderPkgCard(pkg, true))}
+                          {/* Line Items */}
+                          <div className="mt-4 space-y-2">
+                            {pkg.lineItems.map((li, idx) => (
+                              <div key={idx} className="flex items-center gap-3 text-xs">
+                                <span className="font-black text-slate-600">{li.serviceName}</span>
+                                <span className="text-slate-300">—</span>
+                                <span className="font-bold text-slate-500">{getLineItemDone(pkg.id, idx)}/{li.quantity}</span>
+                                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden max-w-[120px]">
+                                  <div
+                                    className="h-full bg-violet-500 rounded-full transition-all"
+                                    style={{ width: `${li.quantity === 0 ? 0 : (getLineItemDone(pkg.id, idx) / li.quantity) * 100}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Milestones */}
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {pkg.paymentMilestones.map((m, idx) => (
+                              <span key={idx} className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest border flex items-center gap-1.5 ${m.status === 'received' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                m.status === 'due' ? 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse' :
+                                  m.status === 'pending' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                    m.status === 'waiting' ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                                      'bg-slate-50 text-slate-400 border-slate-200'
+                                }`}>
+                                {m.status === 'received' ? '✅' : m.status === 'due' ? '🟡' : m.status === 'upcoming' ? '⚪' : '🔵'}
+                                {m.label} ({m.percentage}%) — ₹{m.amountDue.toLocaleString()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-3xl font-black text-slate-900">₹{pkg.totalAmount.toLocaleString()}</p>
+                          <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Received: ₹{pkg.receivedAmount.toLocaleString()}</p>
+                          <div className="mt-3">
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Overall Progress</div>
+                            <div className="w-40 h-3 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-violet-500 rounded-full transition-all" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <p className="text-xs font-black text-violet-600 mt-1">{totalDone}/{totalQty} ({progress}%)</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  )}
-                </>
+                  );
+                })
               )}
             </div>
+
+            {/* Finished Packages */}
+            {finishedPkgs.length > 0 && (
+              <div className="mt-8">
+                <h3 className="font-black text-xs uppercase tracking-[0.3em] text-slate-400 mb-4">Finished Packages</h3>
+                <div className="space-y-3">
+                  {finishedPkgs.map(pkg => (
+                    <div key={pkg.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 opacity-80">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-black text-slate-700">{pkg.clientName} — {pkg.packageName}</h4>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{pkg.period} • ₹{pkg.totalAmount.toLocaleString()} • ✅ Finished</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CheckCircle size={20} className="text-emerald-500" />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
+                            className="p-2 text-red-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                            title="Delete Package"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )
       })()}

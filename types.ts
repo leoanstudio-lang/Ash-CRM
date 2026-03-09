@@ -1,5 +1,5 @@
 
-export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio';
+export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts';
 export type Role = 'admin' | 'employee';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
@@ -126,6 +126,7 @@ export interface Project {
   packageId?: string; // Links task to a package (optional)
   packageLineItemIndex?: number; // Which line item in the package this task belongs to
   completedAt?: string; // ISO Date String when status becomes 'Finished'/'Completed'
+  deliveryFileName?: string; // File name / description entered by employee on task completion
 }
 
 export interface Lead {
@@ -414,4 +415,121 @@ export interface Quotation {
   status: 'Draft' | 'Sent' | 'Approved' | 'Rejected';
   createdAt: string;
   isNewClient: boolean;
+}
+// --- Quotation Demo Types ---
+
+export interface QuotationDemo {
+  id: string;
+  clientId?: string; // Existing client ID
+  clientName: string; // Used if new client
+  clientEmail?: string;
+  clientPhone?: string;
+  serviceId: string;
+  serviceName: string; // The type of demo/creative work
+  description: string; // Specifics of what the demo requires
+  assignedEmployeeId: string;
+  allocatedDate: string; // When the employee should do this
+  status: 'Pending' | 'Completed' | 'Approved' | 'Rejected'; // Approved means client created
+  createdAt: string;
+  isNewClient: boolean;
+}
+
+// --- Accounting Module Types ---
+
+export type AccountType = 'Revenue' | 'Expense' | 'Asset' | 'Liability' | 'Equity';
+
+export interface AccountingCategory {
+  id: string;
+  name: string;
+  type: AccountType;
+  status: 'Active' | 'Disabled';
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface JournalEntryLine {
+  accountId: string; // The category or asset/loan id
+  accountName: string;
+  accountType: AccountType;
+  amount: number;
+  type: 'DEBIT' | 'CREDIT';
+}
+
+export interface JournalEntry {
+  id: string;
+  date: string;
+  type: 'Revenue' | 'Expense' | 'Asset' | 'Loan' | 'Capital';
+  referenceId?: string; // e.g. paymentId, to prevent duplicates
+  remarks: string;
+  entries: JournalEntryLine[];
+  createdBy?: string;
+  createdAt: string;
+  updatedBy?: string;
+  updatedAt?: string;
+  isVoided?: boolean;
+}
+
+export interface AccountingAsset {
+  id: string;
+  name: string;
+  categoryId: string;
+  categoryName: string;
+  purchaseDate: string; // ISO string
+  cost: number;
+  usefulLifeYears: number;
+  paymentMethod: string;
+  journalEntryId?: string;
+  remarks?: string;
+  createdAt: string;
+}
+
+export interface AccountingLoan {
+  id: string;
+  name: string;
+  lender: string;
+  amount: number;
+  interestRate?: number;
+  remainingBalance: number;
+  date: string;
+  journalEntryId?: string;
+  remarks?: string;
+  createdAt: string;
+}
+
+// --- Manual Task (Employee-Created) ---
+
+export interface ManualTask {
+  id: string;
+  clientId: string;
+  clientName: string;
+  companyName?: string;
+  description: string;
+  priority: Priority;
+  status: 'Pending' | 'Working' | 'Waiting' | 'Finished';
+  startDate: string;
+  finishedDate?: string;
+  createdBy: string;
+  createdByName: string;
+  department: string;
+  adminConfirmed: boolean;
+  totalAmount?: number;
+  advance?: number;
+  createdAt: string;
+  projectId?: string;
+}
+
+export interface EmployeeNotification {
+  id: string;
+  type: 'manual_task_created';
+  manualTaskId: string;
+  employeeId: string;
+  employeeName: string;
+  department: string;
+  clientId: string;
+  clientName: string;
+  companyName?: string;
+  description: string;
+  priority: Priority;
+  status: 'pending_review' | 'confirmed' | 'rejected';
+  createdAt: string;
 }

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel, Strategy } from './types';
+import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel, Strategy, ManualTask, EmployeeNotification } from './types';
 import Sidebar from './components/Sidebar';
 import ExecutionCenter from './components/ExecutionCenter';
 import Strategies from './components/Strategies';
@@ -17,9 +17,11 @@ import Payments from './components/Payments';
 import QuotationsView from './components/Quotations';
 import ContentStudio from './components/ContentStudio';
 import RiskMonitorModal from './components/Strategies/RiskMonitorModal';
+import AccountingLayout from './components/Accounting/AccountingLayout';
 import { Bell } from 'lucide-react';
 import { subscribeToCollection } from './lib/db';
-import { Quotation } from './types';
+import { auth, signOut } from './lib/firebase';
+import { Quotation, QuotationDemo } from './types';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
@@ -45,10 +47,13 @@ const App: React.FC = () => {
   const [packages, setPackages] = useState<Package[]>([]);
   const [paymentAlerts, setPaymentAlerts] = useState<PaymentAlert[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [quotationDemos, setQuotationDemos] = useState<QuotationDemo[]>([]);
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [executionTasks, setExecutionTasks] = useState<any[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [strategyTodos, setStrategyTodos] = useState<any[]>([]);
+  const [manualTasks, setManualTasks] = useState<ManualTask[]>([]);
+  const [employeeNotifications, setEmployeeNotifications] = useState<EmployeeNotification[]>([]);
 
   // Content Studio
   const [contentMonths, setContentMonths] = useState<any[]>([]);
@@ -82,6 +87,7 @@ const App: React.FC = () => {
     const unsubPackages = subscribeToCollection<Package>('packages', setPackages);
     const unsubPaymentAlerts = subscribeToCollection<PaymentAlert>('paymentAlerts', setPaymentAlerts);
     const unsubQuotations = subscribeToCollection<Quotation>('quotations', setQuotations);
+    const unsubQuotationDemos = subscribeToCollection<QuotationDemo>('quotationDemos', setQuotationDemos);
     const unsubCampaigns = subscribeToCollection<any>('campaigns', setCampaigns);
     const unsubExecutionTasks = subscribeToCollection<any>('executionTasks', setExecutionTasks);
     const unsubStrategies = subscribeToCollection<Strategy>('strategies', setStrategies);
@@ -104,6 +110,8 @@ const App: React.FC = () => {
     const unsubContentMonths = subscribeToCollection<any>('contentMonths', setContentMonths);
     const unsubContentCards = subscribeToCollection<any>('contentCards', setContentCards);
     const unsubContentAssets = subscribeToCollection<any>('contentAssets', setContentAssets);
+    const unsubManualTasks = subscribeToCollection<ManualTask>('manualTasks', setManualTasks);
+    const unsubEmployeeNotifications = subscribeToCollection<EmployeeNotification>('employeeNotifications', setEmployeeNotifications);
 
     return () => {
       unsubClients();
@@ -134,6 +142,9 @@ const App: React.FC = () => {
       unsubContentMonths();
       unsubContentCards();
       unsubContentAssets();
+      unsubManualTasks();
+      unsubEmployeeNotifications();
+      unsubQuotationDemos();
     };
   }, []);
 
@@ -213,24 +224,16 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    // Sign out of Firebase if the current session is an admin (email-based login)
+    if (currentUser?.role === 'admin') {
+      signOut(auth).catch(console.error);
+    }
     setCurrentUser(null);
   };
 
-  // Ensure Admin fallback is always available if not in DB
-  const fallbackAdmin: Employee = {
-    id: 'ADMIN_FALLBACK',
-    name: 'Admin',
-    mobile: '000',
-    username: 'ashadmin',
-    password: '8086',
-    department: 'Management',
-    role: 'admin'
-  };
-
-  const allEmployees = [...employees];
-  if (!allEmployees.some(e => e.username === 'admin')) {
-    allEmployees.push(fallbackAdmin);
-  }
+  // Only non-admin employees use the Firestore username/password login.
+  // Admins MUST use Firebase Email Authentication exclusively.
+  const allEmployees = employees.filter(e => e.role !== 'admin');
 
   if (!currentUser) {
     return <Login employees={allEmployees} onLogin={handleLogin} />;
@@ -242,7 +245,9 @@ const App: React.FC = () => {
         employee={currentUser}
         projects={projects}
         clients={clients}
-        setProjects={setProjects} // Note: This prop will be ignored/refactored in EmployeePanel
+        manualTasks={manualTasks}
+        quotationDemos={quotationDemos}
+        setProjects={setProjects}
         onLogout={handleLogout}
       />
     );
@@ -253,7 +258,7 @@ const App: React.FC = () => {
     switch (activeSection) {
       case 'Execution Center': return <ExecutionCenter tasks={executionTasks} clients={clients} projects={projects} employees={employees} />;
       case 'Strategies': return <Strategies strategies={strategies} paymentAlerts={paymentAlerts} />;
-      case 'Quotations': return <QuotationsView clients={clients} services={services} />;
+      case 'Quotations': return <QuotationsView clients={clients} services={services} employees={employees} />;
       case 'Development': return <Development clients={clients} projects={projects} setProjects={setProjects} services={services} />;
       case 'Graphics Designing': return <GraphicsDesigning employees={employees} projects={projects} setProjects={setProjects} clients={clients} services={services} packages={packages} paymentAlerts={paymentAlerts} />;
       case 'Sales CRM': return <SalesCRM
@@ -270,10 +275,13 @@ const App: React.FC = () => {
       />;
       case 'Client DB': return <ClientDB clients={clients} setClients={setClients} />;
       case 'History': return <History projects={projects} setProjects={setProjects} employees={employees} packages={packages} />;
+      case 'Accounts': return <AccountingLayout />;
       case 'Payments': return <Payments paymentAlerts={paymentAlerts} packages={packages} clients={clients} />;
       case 'Content Studio': return <ContentStudio months={contentMonths} cards={contentCards} assets={contentAssets} />;
       case 'Notification': return <Notifications
         notifications={notifications}
+        employeeNotifications={employeeNotifications}
+        clients={clients}
         onNotificationClick={handleNotificationClick}
         onDismiss={handleDismissNotification}
         onClearAll={handleClearAllNotifications}
@@ -336,7 +344,7 @@ const App: React.FC = () => {
   };
 
   const counts = {
-    'Execution Center': executionTasks.filter(t => t.status === 'Pending').length,
+    'Execution Center': executionTasks.filter(t => t.status === 'Pending' || t.status === 'In Progress').length,
     Payments: paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting').length,
     Quotations: quotations.filter(q => q.status === 'Draft' || q.status === 'Sent').length,
     'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
@@ -346,7 +354,7 @@ const App: React.FC = () => {
       p.deadline && p.deadline.split('T')[0] <= todayStr
     ).length,
     'Client DB': clients.length,
-    Notification: notifications.length,
+    Notification: notifications.length + employeeNotifications.filter(n => n.status === 'pending_review').length,
     Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
     Strategies: calculateStrategyBadge(),
     'Content Studio': calculateContentBadge()
