@@ -1,6 +1,6 @@
 
 export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts';
-export type Role = 'admin' | 'employee';
+export type Role = 'admin' | 'employee' | 'super_admin';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
 export interface TimeLog {

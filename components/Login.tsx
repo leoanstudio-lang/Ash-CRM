@@ -40,7 +40,7 @@ const Login: React.FC<LoginProps> = ({ employees, onLogin }) => {
             mobile: '',
             username: username,
             department: 'Management',
-            role: 'admin'
+            role: 'super_admin'
           });
         }
       } else {

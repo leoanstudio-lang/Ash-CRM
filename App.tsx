@@ -225,7 +225,7 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     // Sign out of Firebase if the current session is an admin (email-based login)
-    if (currentUser?.role === 'admin') {
+    if (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') {
       signOut(auth).catch(console.error);
     }
     setCurrentUser(null);
@@ -233,7 +233,7 @@ const App: React.FC = () => {
 
   // Only non-admin employees use the Firestore username/password login.
   // Admins MUST use Firebase Email Authentication exclusively.
-  const allEmployees = employees.filter(e => e.role !== 'admin');
+  const allEmployees = employees.filter(e => e.role !== 'admin' && e.role !== 'super_admin');
 
   if (!currentUser) {
     return <Login employees={allEmployees} onLogin={handleLogin} />;
