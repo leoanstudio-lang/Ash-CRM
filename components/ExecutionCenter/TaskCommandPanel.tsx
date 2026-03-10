@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ExecutionTask } from '../../types';
-import { Play, Pause, Check, Edit2, List as ListIcon, Columns, Calendar as CalendarIcon, Filter, Layers } from 'lucide-react';
-import { updateDoc, doc } from 'firebase/firestore';
+import { Play, Pause, Check, Edit2, List as ListIcon, Columns, Calendar as CalendarIcon, Filter, Layers, Trash2 } from 'lucide-react';
+import { updateDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 
 interface TaskCommandPanelProps {
@@ -67,6 +67,17 @@ const TaskCommandPanel: React.FC<TaskCommandPanelProps> = ({ tasks, onEditTask }
         }
     };
 
+    const handleDeleteTask = async (task: ExecutionTask) => {
+        if (window.confirm('Are you sure you want to delete this task?')) {
+            try {
+                await deleteDoc(doc(db, 'executionTasks', task.id));
+            } catch (error) {
+                console.error("Error deleting task:", error);
+                alert("Failed to delete task. Please try again.");
+            }
+        }
+    };
+
     const renderTaskCard = (task: ExecutionTask) => {
         const matrix = getMatrixCategory(task);
 
@@ -85,9 +96,14 @@ const TaskCommandPanel: React.FC<TaskCommandPanelProps> = ({ tasks, onEditTask }
                         </div>
                         <h4 className="text-sm font-bold text-slate-800 leading-tight">{task.name}</h4>
                     </div>
-                    <button onClick={() => onEditTask(task)} className="text-slate-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Edit2 size={14} />
-                    </button>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => onEditTask(task)} className="p-1 text-slate-400 hover:text-indigo-600 transition-colors">
+                            <Edit2 size={14} />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task); }} className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer" title="Delete Task">
+                            <Trash2 size={14} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex items-center justify-between mt-4 pl-2">

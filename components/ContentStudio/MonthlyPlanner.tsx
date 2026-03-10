@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { ContentMonth, ContentCard } from '../../types';
 import { db } from '../../lib/firebase';
-import { collection, addDoc } from 'firebase/firestore';
-import { CalendarDays, Plus, Target, ChevronRight } from 'lucide-react';
+import { collection, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { CalendarDays, Plus, Target, ChevronRight, Trash2 } from 'lucide-react';
 import MonthDetail from './MonthDetail';
 
 interface MonthlyPlannerProps {
@@ -43,6 +43,20 @@ const MonthlyPlanner: React.FC<MonthlyPlannerProps> = ({ months, cards }) => {
             setIsCreating(false);
         } catch (error) {
             console.error("Error creating content month:", error);
+        }
+    };
+
+    const handleDeleteMonth = async (monthId: string) => {
+        if (window.confirm('Are you sure you want to delete this content plan? This action cannot be undone.')) {
+            try {
+                await deleteDoc(doc(db, 'contentMonths', monthId));
+                if (selectedMonth?.id === monthId) {
+                    setSelectedMonth(null); // Deselect if currently viewing the deleted month
+                }
+            } catch (error) {
+                console.error("Error deleting content month:", error);
+                alert("Failed to delete the month plan. Please try again.");
+            }
         }
     };
 
@@ -178,8 +192,17 @@ const MonthlyPlanner: React.FC<MonthlyPlannerProps> = ({ months, cards }) => {
                                         <CalendarDays size={18} className="text-rose-500" />
                                         {month.month} {month.year}
                                     </div>
-                                    <div className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center group-hover:bg-rose-50 group-hover:text-rose-600 transition-colors">
-                                        <ChevronRight size={18} className="translate-x-0 group-hover:translate-x-0.5 transition-transform" />
+                                    <div className="flex items-center gap-2">
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteMonth(month.id!); }}
+                                            className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                                            title="Delete Month Plan"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                        <div className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center group-hover:bg-rose-50 group-hover:text-rose-600 transition-colors">
+                                            <ChevronRight size={18} className="translate-x-0 group-hover:translate-x-0.5 transition-transform" />
+                                        </div>
                                     </div>
                                 </div>
 
