@@ -1546,43 +1546,43 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
         return (
           <div className="space-y-6">
             {/* MINI DASHBOARD */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 lg:gap-4">
               {/* Active Packages Count */}
-              <div className="bg-white rounded-[2rem] p-6 lg:p-8 border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-violet-50 rounded-bl-full -mr-16 -mt-16 transition-transform group-hover:scale-110 duration-500"></div>
+              <div className="bg-white rounded-2xl p-4 lg:p-5 border border-slate-200/60 shadow-sm relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-violet-50/50 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110 duration-500"></div>
                 <div className="relative">
-                  <div className="flex items-center justify-between mb-4 lg:mb-6">
+                  <div className="flex items-center justify-between mb-3">
                     <div>
-                      <h3 className="text-[10px] font-black tracking-[0.2em] text-violet-500 uppercase mb-1">Active Works</h3>
-                      <p className="text-slate-400 text-xs font-semibold">Total ongoing packages</p>
+                      <h3 className="text-[10px] font-bold tracking-[0.1em] text-slate-500 uppercase mb-0.5">Active Works</h3>
+                      <p className="text-slate-400 text-[10px] font-medium">Total ongoing packages</p>
                     </div>
-                    <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center text-violet-600 shadow-inner">
-                      <Layers size={24} strokeWidth={2.5} />
+                    <div className="w-8 h-8 bg-violet-50 rounded-xl flex items-center justify-center text-violet-600">
+                      <Layers size={16} strokeWidth={2} />
                     </div>
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800">{totalActivePackages}</span>
-                    <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Packages</span>
+                    <span className="text-2xl lg:text-3xl font-black tracking-tight text-slate-800">{totalActivePackages}</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Packages</span>
                   </div>
                 </div>
               </div>
 
               {/* Active Packages Value */}
-              <div className="bg-white rounded-[2rem] p-6 lg:p-8 border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 rounded-bl-full -mr-16 -mt-16 transition-transform group-hover:scale-110 duration-500"></div>
+              <div className="bg-white rounded-2xl p-4 lg:p-5 border border-slate-200/60 shadow-sm relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-50/50 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110 duration-500"></div>
                 <div className="relative">
-                  <div className="flex items-center justify-between mb-4 lg:mb-6">
+                  <div className="flex items-center justify-between mb-3">
                     <div>
-                      <h3 className="text-[10px] font-black tracking-[0.2em] text-emerald-500 uppercase mb-1">Pipeline Value</h3>
-                      <p className="text-slate-400 text-xs font-semibold">Value of active packages</p>
+                      <h3 className="text-[10px] font-bold tracking-[0.1em] text-slate-500 uppercase mb-0.5">Pipeline Value</h3>
+                      <p className="text-slate-400 text-[10px] font-medium">Value of active packages</p>
                     </div>
-                    <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 shadow-inner">
-                      <DollarSign size={24} strokeWidth={2.5} />
+                    <div className="w-8 h-8 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600">
+                      <DollarSign size={16} strokeWidth={2} />
                     </div>
                   </div>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800">
-                      <span className="text-2xl text-slate-400 mr-1">₹</span>
+                    <span className="text-2xl lg:text-3xl font-black tracking-tight text-slate-800">
+                      <span className="text-lg text-slate-400 mr-1">₹</span>
                       {totalActiveValue.toLocaleString()}
                     </span>
                   </div>
@@ -1590,21 +1590,21 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
               </div>
 
               {/* Finished Packages Count */}
-              <div className="bg-white rounded-[2rem] p-6 lg:p-8 border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 rounded-bl-full -mr-16 -mt-16 transition-transform group-hover:scale-110 duration-500"></div>
+              <div className="bg-white rounded-2xl p-4 lg:p-5 border border-slate-200/60 shadow-sm relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-slate-50/80 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110 duration-500"></div>
                 <div className="relative">
-                  <div className="flex items-center justify-between mb-4 lg:mb-6">
+                  <div className="flex items-center justify-between mb-3">
                     <div>
-                      <h3 className="text-[10px] font-black tracking-[0.2em] text-slate-500 uppercase mb-1">Completed</h3>
-                      <p className="text-slate-400 text-xs font-semibold">Total finished packages</p>
+                      <h3 className="text-[10px] font-bold tracking-[0.1em] text-slate-500 uppercase mb-0.5">Completed</h3>
+                      <p className="text-slate-400 text-[10px] font-medium">Total finished packages</p>
                     </div>
-                    <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-500 shadow-inner">
-                      <CheckCircle size={24} strokeWidth={2.5} />
+                    <div className="w-8 h-8 bg-slate-50 rounded-xl flex items-center justify-center text-slate-500">
+                      <CheckCircle size={16} strokeWidth={2} />
                     </div>
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-4xl lg:text-5xl font-black tracking-tight text-slate-800">{totalFinishedPackages}</span>
-                    <span className="text-sm font-bold text-slate-400 uppercase tracking-wider">Packages</span>
+                    <span className="text-2xl lg:text-3xl font-black tracking-tight text-slate-800">{totalFinishedPackages}</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Packages</span>
                   </div>
                 </div>
               </div>
