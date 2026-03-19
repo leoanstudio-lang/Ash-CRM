@@ -534,7 +534,22 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
 
     const pkgTasks = projects
       .filter(t => t.packageId === pkg.id)
-      .sort((a, b) => (a.createdAt || a.startDate).localeCompare(b.createdAt || b.startDate));
+      .sort((a, b) => {
+        // Natural sort based on description matching pattern 'X/Y' or numbers
+        const getNum = (desc: string) => {
+          if (!desc) return Infinity;
+          const match = desc.match(/(\d+)\s*\//);
+          if (match) return parseInt(match[1]);
+          const numMatch = desc.match(/\d+/);
+          return numMatch ? parseInt(numMatch[0]) : Infinity;
+        };
+        const numA = getNum(a.description || '');
+        const numB = getNum(b.description || '');
+        if (numA !== Infinity || numB !== Infinity) {
+          if (numA !== numB) return numA - numB;
+        }
+        return (a.createdAt || a.startDate).localeCompare(b.createdAt || b.startDate);
+      });
 
     if (pkgTasks.length > 0) {
       const taskData = pkgTasks.map(task => {
@@ -554,7 +569,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
           task.serviceName,
           start,
           end,
-          task.description || '-',
+          (task as any).deliveryFileName || task.description || '-',
           task.status.toUpperCase()
         ];
       });
@@ -1371,7 +1386,25 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
         const renderPkgCard = (pkg: Package, isFinishedView: boolean = false) => {
           const client = clients.find(c => c.id === pkg.clientId);
           const progress = getPackageProgress(pkg);
-          const pkgTasks = projects.filter(t => t.packageId === pkg.id).sort((a, b) => (a.createdAt || a.startDate).localeCompare(b.createdAt || b.startDate));
+          const pkgTasks = projects
+            .filter(t => t.packageId === pkg.id)
+            .sort((a, b) => {
+              // Natural sort based on description matching pattern 'X/Y' or numbers
+              const getNum = (desc: string) => {
+                if (!desc) return Infinity;
+                const match = desc.match(/(\d+)\s*\//); // e.g., "1/10" -> "1"
+                if (match) return parseInt(match[1]);
+                const numMatch = desc.match(/\d+/);
+                return numMatch ? parseInt(numMatch[0]) : Infinity;
+              };
+              const numA = getNum(a.description || '');
+              const numB = getNum(b.description || '');
+              if (numA !== Infinity || numB !== Infinity) {
+                if (numA !== numB) return numA - numB;
+              }
+              // Fallback to date sort if no numbers found
+              return (a.createdAt || a.startDate).localeCompare(b.createdAt || b.startDate);
+            });
 
           // Financials & Balance Logic
           const balance = pkg.totalAmount - pkg.receivedAmount;
@@ -1410,6 +1443,14 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                       title="Edit Package"
                     >
                       Edit
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(pkg.id); }}
+                      className="p-1 px-2 border rounded-md text-[10px] uppercase font-bold text-slate-400 hover:text-red-600 hover:border-red-200 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100 flex items-center gap-1"
+                      title="Delete Package"
+                    >
+                      <Trash2 size={12} />
+                      <span className="hidden sm:inline">Delete</span>
                     </button>
                   </div>
 

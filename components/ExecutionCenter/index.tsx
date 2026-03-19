@@ -5,9 +5,10 @@ import AnalyticsPanel from './AnalyticsPanel';
 import CalendarBox from './CalendarBox';
 import TaskCommandPanel from './TaskCommandPanel';
 import TaskFormModal from './TaskFormModal';
+import AITaskModal from './AITaskModal';
 import { addDoc, collection, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { Plus, LayoutDashboard, Calendar, BarChart2 } from 'lucide-react';
+import { Plus, LayoutDashboard, Calendar, BarChart2, Sparkles } from 'lucide-react';
 
 interface ExecutionCenterProps {
     tasks: ExecutionTask[];
@@ -21,6 +22,7 @@ const DEPARTMENTS = ['Management', 'Sales/Marketing', 'Development', 'Design', '
 const ExecutionCenter: React.FC<ExecutionCenterProps> = ({ tasks, clients, projects, employees }) => {
     const [activeTab, setActiveTab] = useState<'Tasks' | 'Calendar' | 'Analytics'>('Tasks');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isAIModalOpen, setIsAIModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState<ExecutionTask | undefined>(undefined);
 
     const handleSaveTask = async (taskData: Partial<ExecutionTask>) => {
@@ -41,6 +43,23 @@ const ExecutionCenter: React.FC<ExecutionCenterProps> = ({ tasks, clients, proje
             }
         } catch (e) {
             console.error('Error saving task:', e);
+        }
+    };
+
+    const handleSaveMultipleTasks = async (tasksData: Partial<ExecutionTask>[]) => {
+        try {
+            for (const taskData of tasksData) {
+                const newTask = {
+                    ...taskData,
+                    id: `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    createdAt: new Date().toISOString(),
+                    timeLogs: [],
+                    actualTimeSeconds: 0
+                };
+                await addDoc(collection(db, 'executionTasks'), newTask);
+            }
+        } catch (e) {
+            console.error('Error saving multiple tasks:', e);
         }
     };
 
@@ -79,12 +98,20 @@ const ExecutionCenter: React.FC<ExecutionCenterProps> = ({ tasks, clients, proje
                     </button>
                 </div>
 
-                <button
-                    onClick={openNewTaskModal}
-                    className="flex items-center gap-2 px-5 py-3 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-indigo-700 shadow-lg shadow-indigo-600/30 transition-all active:scale-95"
-                >
-                    <Plus size={16} /> Init Task
-                </button>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setIsAIModalOpen(true)}
+                        className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:shadow-xl hover:shadow-purple-600/30 transition-all active:scale-95"
+                    >
+                        <Sparkles size={16} /> AI Task
+                    </button>
+                    <button
+                        onClick={openNewTaskModal}
+                        className="flex items-center gap-2 px-5 py-3 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-indigo-700 shadow-lg shadow-indigo-600/30 transition-all active:scale-95"
+                    >
+                        <Plus size={16} /> Init Task
+                    </button>
+                </div>
             </div>
 
             {/* Focus Strip (Always Visible or mostly visible) */}
@@ -111,6 +138,12 @@ const ExecutionCenter: React.FC<ExecutionCenterProps> = ({ tasks, clients, proje
                 onSave={handleSaveTask}
                 initialData={editingTask}
                 departments={DEPARTMENTS}
+            />
+
+            <AITaskModal 
+                isOpen={isAIModalOpen}
+                onClose={() => setIsAIModalOpen(false)}
+                onSave={handleSaveMultipleTasks}
             />
         </div>
     );

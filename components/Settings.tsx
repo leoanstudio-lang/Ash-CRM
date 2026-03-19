@@ -1,9 +1,9 @@
 
 import React, { useState } from 'react';
 import { Employee, Service, Role, Channel } from '../types';
-import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook, Megaphone } from 'lucide-react';
-import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, getCompanyProfile, saveCompanyProfile, addChannelToDB, deleteChannelFromDB } from '../lib/db';
-import { CompanyProfile } from '../types';
+import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook, Megaphone, Sparkles } from 'lucide-react';
+import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, getCompanyProfile, saveCompanyProfile, addChannelToDB, deleteChannelFromDB, getAIConfig, saveAIConfig } from '../lib/db';
+import { CompanyProfile, AIConfig } from '../types';
 
 interface SettingsProps {
   employees: Employee[];
@@ -15,7 +15,7 @@ interface SettingsProps {
 }
 
 const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [], onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'channels' | 'admin' | 'company'>('employees');
+  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'channels' | 'admin' | 'company' | 'aiConfig'>('employees');
 
   // Company Profile State
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -24,6 +24,12 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
     tagline: '',
     contacts: [],
     socials: []
+  });
+
+  // AI Config State
+  const [isSavingAI, setIsSavingAI] = useState(false);
+  const [aiForm, setAiForm] = useState<AIConfig>({
+    geminiApiKey: ''
   });
 
   const addContact = () => {
@@ -73,7 +79,12 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
       const data = await getCompanyProfile();
       if (data) setCompanyForm(data);
     };
+    const fetchAIData = async () => {
+      const aiData = await getAIConfig();
+      if (aiData) setAiForm(aiData);
+    };
     fetchCompanyData();
+    fetchAIData();
   }, []);
 
   const handleSaveConfig = async (e: React.FormEvent) => {
@@ -82,6 +93,14 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
     await saveCompanyProfile(companyForm);
     setIsSavingConfig(false);
     alert('Company Configuration saved successfully!');
+  };
+
+  const handleSaveAIConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingAI(true);
+    await saveAIConfig(aiForm);
+    setIsSavingAI(false);
+    alert('AI Configuration saved successfully!');
   };
 
   // States for better form handling
@@ -193,6 +212,12 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
           className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'admin' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
         >
           Security
+        </button>
+        <button
+          onClick={() => setActiveTab('aiConfig')}
+          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'aiConfig' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+        >
+          <span className="flex items-center gap-2"><Sparkles size={14} className={activeTab === 'aiConfig' ? 'text-blue-600' : 'text-slate-400'}/> AI Configuration</span>
         </button>
         <div className="ml-auto p-4">
           <button onClick={onLogout} className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold hover:bg-red-100 transition-all">
@@ -662,6 +687,59 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                   className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black rounded-2xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isSavingConfig ? <span className="animate-pulse">Saving...</span> : <><Save size={18} /> Save Company Configuration</>}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'aiConfig' && (
+          <div className="max-w-2xl space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div>
+              <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                <Sparkles size={24} className="text-purple-600" /> AI Features Setup
+              </h3>
+              <p className="text-sm text-slate-500 mt-1">Configure your Gemini API Key to enable automated AI features across the CRM.</p>
+            </div>
+
+            <form onSubmit={handleSaveAIConfig} className="bg-slate-50 p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+              
+              <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100 flex items-start gap-4">
+                <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center shrink-0">
+                  <Key size={18} className="text-purple-700" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-800">Connection Status</p>
+                  {aiForm.geminiApiKey && aiForm.geminiApiKey.length > 20 ? (
+                    <p className="text-xs pt-1 flex items-center gap-1 font-bold text-emerald-600"><CheckCircle2 size={12}/> API Key Configured</p>
+                  ) : (
+                    <p className="text-xs pt-1 flex items-center gap-1 font-bold text-amber-500"><Shield size={12}/> Needs Configuration</p>
+                  )}
+                  <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">Ensure you input a valid Google Gemini API Key. Invalid keys will result in AI tasks failing silently or with errors. Your key is stored securely in Firebase.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1 flex items-center gap-2">
+                  <Key size={12} /> Gemini API Key
+                </label>
+                <input
+                  required
+                  type="password"
+                  className="w-full p-4 border border-slate-200 rounded-2xl bg-white font-bold text-slate-800 focus:ring-2 focus:ring-purple-500 outline-none transition-all font-mono"
+                  placeholder="AIzaSy..."
+                  value={aiForm.geminiApiKey}
+                  onChange={e => setAiForm({ ...aiForm, geminiApiKey: e.target.value })}
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-200">
+                <button
+                  type="submit"
+                  disabled={isSavingAI}
+                  className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-black rounded-2xl shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isSavingAI ? <span className="animate-pulse">Saving...</span> : <><Save size={18} /> Save AI Configuration</>}
                 </button>
               </div>
             </form>

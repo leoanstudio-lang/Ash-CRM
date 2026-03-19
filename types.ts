@@ -388,6 +388,10 @@ export interface CompanyProfile {
   socials: DynamicField[];
 }
 
+export interface AIConfig {
+  geminiApiKey: string;
+}
+
 // --- Quotation Management Types ---
 
 export interface QuotationItem {

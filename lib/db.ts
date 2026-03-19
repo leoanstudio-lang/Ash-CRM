@@ -13,7 +13,7 @@ import {
     Timestamp
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Project, Client, Lead, Employee, Service, Package, PaymentAlert, CompanyProfile, Quotation } from "../types";
+import { Project, Client, Lead, Employee, Service, Package, PaymentAlert, CompanyProfile, AIConfig, Quotation } from "../types";
 
 // --- Generic Helpers ---
 
@@ -450,6 +450,30 @@ export const saveCompanyProfile = async (profile: CompanyProfile) => {
         console.log('Company Profile successfully saved!');
     } catch (error) {
         console.error('Error saving company profile:', error);
+    }
+};
+
+export const getAIConfig = async (): Promise<AIConfig | null> => {
+    try {
+        const docRef = doc(db, 'config', 'ai_config');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            return docSnap.data() as AIConfig;
+        }
+        return null;
+    } catch (error) {
+        console.error('Error fetching AI config:', error);
+        return null;
+    }
+};
+
+export const saveAIConfig = async (config: AIConfig) => {
+    try {
+        const docRef = doc(db, 'config', 'ai_config');
+        await setDoc(docRef, config);
+        console.log('AI Config successfully saved!');
+    } catch (error) {
+        console.error('Error saving AI config:', error);
     }
 };
 
