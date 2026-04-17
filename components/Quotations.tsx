@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Quotation, QuotationItem, Client, CompanyProfile, DynamicField, Service, QuotationDemo, Employee } from '../types';
-import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, User, Phone, Mail, Navigation, FileSignature, Search, Calendar, Filter, ArrowUpRight, CheckCircle2, AlertCircle, PlaySquare } from 'lucide-react';
+import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, User, Phone, Mail, Navigation, FileSignature, Search, Calendar, Filter, ArrowUpRight, CheckCircle2, AlertCircle, PlaySquare, Pencil } from 'lucide-react';
 import { addQuotationToDB, updateQuotationInDB, addClientToDB, getCompanyProfile, subscribeToCollection, deleteQuotationFromDB, addQuotationDemoToDB, updateQuotationDemoInDB, deleteQuotationDemoFromDB } from '../lib/db';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -12,12 +12,23 @@ interface QuotationsProps {
 }
 
 const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees }) => {
+    const generateRandomCode = (length: number) => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
+    };
+
     const [quotations, setQuotations] = useState<Quotation[]>([]);
     const [demos, setDemos] = useState<QuotationDemo[]>([]);
     const [activeTab, setActiveTab] = useState<'Quotations' | 'Demos'>('Quotations');
     const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
 
     const [isCreating, setIsCreating] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editingQuotationId, setEditingQuotationId] = useState<string | null>(null);
     const [deletingQuotationId, setDeletingQuotationId] = useState<string | null>(null);
 
     // Filters & Search
@@ -32,6 +43,19 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
     // Form State
     const [clientType, setClientType] = useState<'existing' | 'new'>('existing');
     const [selectedClientId, setSelectedClientId] = useState<string>('');
+    const [clientSearchTerm, setClientSearchTerm] = useState('');
+    const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+    const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsClientDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     // New Client Form
     const [newClientName, setNewClientName] = useState('');
@@ -46,6 +70,10 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
     const [items, setItems] = useState<QuotationItem[]>([{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
     const [discount, setDiscount] = useState<number>(0);
     const [terms, setTerms] = useState("1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.");
+    
+    // Custom HTML Setup
+    const [isCustomHtml, setIsCustomHtml] = useState<boolean>(false);
+    const [customHtmlContent, setCustomHtmlContent] = useState<string>('');
 
     // Demo Creation State
     const [isCreatingDemo, setIsCreatingDemo] = useState(false);
@@ -123,6 +151,39 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         setDeletingQuotationId(id);
     };
 
+    const handleEditClick = (q: Quotation) => {
+        // Populate all form states with quotation data
+        setIssueDate(q.issueDate);
+        setValidityDate(q.validityDate);
+        
+        // Find if it's an existing client or new
+        if (q.clientId) {
+            setClientType('existing');
+            setSelectedClientId(q.clientId);
+        } else {
+            setClientType('new');
+            // Check if clientName was derived from company or name
+            // For now, just set both or try to guess. 
+            // Since we don't save separate company/person name for 'new' type in DB yet, 
+            // we'll just put finalClientName in both for editing.
+            setNewClientName(q.clientName);
+            setNewClientCompany(q.clientName);
+            setNewClientEmail(q.clientEmail || '');
+            setNewClientPhone(q.clientPhone || '');
+        }
+        
+        setClientAddress(q.clientAddress || '');
+        setItems(q.items && q.items.length > 0 ? [...q.items] : [{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
+        setDiscount(q.discount || 0);
+        setTerms(q.termsAndConditions || '');
+        setIsCustomHtml(!!q.isCustomHtml);
+        setCustomHtmlContent(q.customHtmlContent || '');
+
+        setEditingQuotationId(q.id);
+        setIsEditing(true);
+        setIsCreating(true);
+    };
+
     const confirmDelete = async () => {
         if (!deletingQuotationId) return;
         try {
@@ -137,6 +198,8 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
     const resetForm = () => {
         setClientType('existing');
         setSelectedClientId('');
+        setClientSearchTerm('');
+        setIsClientDropdownOpen(false);
         setNewClientName('');
         setNewClientCompany('');
         setNewClientEmail('');
@@ -144,18 +207,40 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         setClientAddress('');
         setItems([{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
         setDiscount(0);
+        setTerms("1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.");
+        setIsCustomHtml(false);
+        setCustomHtmlContent('');
         setIsCreating(false);
+        setIsEditing(false);
+        setEditingQuotationId(null);
     };
 
     const handleSaveQuotation = async () => {
         // Basic validation
         if (clientType === 'existing' && !selectedClientId) return alert("Please select a client.");
         if (clientType === 'new' && !newClientName) return alert("Please enter client name.");
-        if (items.some(i => !i.description)) return alert("All items must have a description.");
+        if (!isCustomHtml && items.some(i => !i.description)) return alert("All items must have a description.");
+        if (isCustomHtml && !customHtmlContent.trim()) return alert("Please enter Custom HTML content.");
+
+        let finalTotalAmount = totalAmount;
+        let finalSubtotal = subtotal;
+
+        if (isCustomHtml) {
+            const userInput = window.prompt("Enter the Total Value (Amount) for this Custom Quotation (for Dashboard metrics):");
+            if (userInput === null) {
+                return; // User cancelled
+            }
+            const val = parseFloat(userInput.replace(/[^\d.]/g, ''));
+            finalTotalAmount = isNaN(val) ? 0 : val;
+            finalSubtotal = finalTotalAmount;
+        }
 
         // Generate strict QTN ID
-        const qtnCount = quotations.length + 1;
-        const qNumber = `QTN-${new Date().getFullYear()}-${qtnCount.toString().padStart(3, '0')}`;
+        let qNumber = `QT-${generateRandomCode(6)}`;
+        if (isEditing && editingQuotationId) {
+            const existing = quotations.find(q => q.id === editingQuotationId);
+            if (existing) qNumber = existing.quotationNumber;
+        }
 
         let finalClientName = '';
         let finalClientEmail = '';
@@ -174,28 +259,34 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             finalClientPhone = newClientPhone;
         }
 
-        const newQtn: Omit<Quotation, 'id'> = {
+        const qtnData: Omit<Quotation, 'id'> = {
             quotationNumber: qNumber,
             issueDate,
             validityDate,
             clientName: finalClientName,
             clientEmail: finalClientEmail,
             clientPhone: finalClientPhone,
-            items,
-            subtotal,
-            discount: discount || 0,
-            totalAmount,
-            termsAndConditions: terms,
-            status: 'Draft',
-            createdAt: new Date().toISOString(),
-            isNewClient: clientType === 'new'
+            items: isCustomHtml ? [] : items,
+            subtotal: finalSubtotal,
+            discount: isCustomHtml ? 0 : (discount || 0),
+            totalAmount: finalTotalAmount,
+            termsAndConditions: isCustomHtml ? '' : terms,
+            status: isEditing ? (quotations.find(q => q.id === editingQuotationId)?.status || 'Draft') : 'Draft',
+            createdAt: isEditing ? (quotations.find(q => q.id === editingQuotationId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
+            isNewClient: clientType === 'new',
+            isCustomHtml,
+            customHtmlContent: isCustomHtml ? customHtmlContent : undefined
         };
 
-        if (clientType === 'existing' && selectedClientId) newQtn.clientId = selectedClientId;
-        if (clientAddress) newQtn.clientAddress = clientAddress;
+        if (clientType === 'existing' && selectedClientId) qtnData.clientId = selectedClientId;
+        if (clientAddress) qtnData.clientAddress = clientAddress;
 
         try {
-            await addQuotationToDB(newQtn);
+            if (isEditing && editingQuotationId) {
+                await updateQuotationInDB(editingQuotationId, qtnData);
+            } else {
+                await addQuotationToDB(qtnData);
+            }
             resetForm();
         } catch (err) {
             console.error(err);
@@ -341,74 +432,129 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         };
 
         // ==========================================
-        // 1. HEADER SECTION
+        // 1. HEADER SECTION — Brand Dark Band (Package Report Style)
         // ==========================================
-        let addedLogo = false;
+        const pageWidth = doc.internal.pageSize.width;
+        const royalPurple: [number, number, number] = [108, 46, 247]; // #6C2EF7
+        const white: [number, number, number] = [255, 255, 255];
 
-        // Strict Left Header: ONLY Logo or Company Name
+        // === DARK BRAND BAND (full width) ===
+        doc.setFillColor(...deepEclipse);
+        doc.rect(0, 0, pageWidth, 46, 'F'); // same width as package report
+
+        // Company Name — White, bold, left
+        doc.setTextColor(...white);
+        doc.setFont("helvetica", "bold");
+
+        let addedLogo = false;
         if (co?.logoUrl) {
             try {
+                const loadImageAsBase64 = async (url: string): Promise<string> => {
+                    try {
+                        const response = await fetch(url, { mode: 'cors' });
+                        if (!response.ok) throw new Error("Network response was not ok");
+                        const blob = await response.blob();
+                        return new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                if (typeof reader.result === 'string') resolve(reader.result);
+                                else reject("Failed to convert blob to base64");
+                            };
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                    } catch (err) {
+                        return new Promise((resolve, reject) => {
+                            const img = new Image();
+                            img.crossOrigin = 'Anonymous';
+                            img.onload = () => {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = img.width; canvas.height = img.height;
+                                const ctx = canvas.getContext('2d');
+                                if (ctx) { ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL('image/png')); }
+                                else reject('No canvas context');
+                            };
+                            img.onerror = reject;
+                            img.src = url;
+                        });
+                    }
+                };
                 const base64Logo = await loadImageAsBase64(co.logoUrl);
-                // Calculate aspect ratio to fit nicely in the top left
-                doc.addImage(base64Logo, 'PNG', 14, 15, 35, 12, '', 'FAST');
+                doc.addImage(base64Logo, 'PNG', 14, 8, 30, 10, '', 'FAST');
                 addedLogo = true;
             } catch (err) {
-                console.warn("Could not load logo for PDF, falling back to text:", err);
+                console.warn("Could not load logo:", err);
             }
         }
 
-        doc.setTextColor(...deepEclipse);
-
         if (!addedLogo) {
             doc.setFontSize(16);
-            doc.setFont("helvetica", "bold");
-            doc.text(co?.companyName || 'Your Company', 14, 22);
+            doc.text(co?.companyName || 'Your Company', 14, 18);
         }
 
-        // Right Side: QUOTATION & Details Box
-        doc.setFontSize(22);
-        doc.setTextColor(...deepEclipse);
-        doc.setFont("helvetica", "bold");
-        doc.text("QUOTATION", 196, 22, { align: 'right' });
-
-        doc.setFontSize(9);
-        doc.setTextColor(...textMuted);
-        doc.setFont("helvetica", "bold");
-        doc.text("Quote No:", 150, 32);
-        doc.text("Date:", 150, 38);
-        doc.text("Valid Until:", 150, 44);
-
-        doc.setTextColor(...deepEclipse);
-        doc.setFont("helvetica", "normal");
-        doc.text(q.quotationNumber, 196, 32, { align: 'right' });
-        doc.text(formatDate(q.issueDate), 196, 38, { align: 'right' });
-        doc.text(formatDate(q.validityDate), 196, 44, { align: 'right' });
-
-        // Left Side Tagline (Filling the gap beautifully)
-        let leftSideY = addedLogo ? 32 : 28; // Adjust Y coordinate based on whether logo or text was printed
+        // Tagline — White, italic, below company name
+        let bandTextY = addedLogo ? 24 : 24;
         if (co?.tagline && co.tagline.trim() !== "") {
-            doc.setFontSize(9);
+            doc.setFontSize(8);
             doc.setFont("helvetica", "italic");
-            doc.setTextColor(...textMuted);
-
-            // Split tagline in case it's a long quote
-            const splitTagline = doc.splitTextToSize(co.tagline, 100);
-            doc.text(splitTagline, 14, leftSideY);
+            doc.setTextColor(200, 190, 230); // slightly muted white-purple
+            doc.text(co.tagline, 14, bandTextY);
+            bandTextY += 5;
         }
 
-        // ==========================================
-        // 2. DIVIDER
-        // ==========================================
-        let maxHeaderY = 50; // Tightened spacing to remove massive gap
+        // Company Contacts — sort: phone first, email second, address last
+        if (co?.contacts && co.contacts.length > 0) {
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7.5);
+            doc.setTextColor(180, 170, 210);
 
+            const getContactPriority = (val: string) => {
+                if (val.includes('@')) return 2;                         // email
+                if (val.replace(/\D/g, '').length >= 10) return 1;      // phone — 10+ pure digits
+                return 3;                                               // address
+            };
+            const sortedContacts = [...co.contacts].sort((a, b) => getContactPriority(a.value) - getContactPriority(b.value));
+
+            sortedContacts.slice(0, 3).forEach(contact => {
+                if (bandTextY < 42) {
+                    doc.text(contact.value, 14, bandTextY);
+                    bandTextY += 4.5;
+                }
+            });
+        }
+
+
+        // "QUOTATION" Title — White, large, bold, right-aligned on band
+        doc.setFontSize(24);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(...white);
+        doc.text("QUOTATION", pageWidth - 14, 28, { align: 'right' });
+
+        // === QUOTE DETAILS ROW — Below the dark band ===
+        const detailsY = 56;
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(...deepEclipse);
+        doc.text("Quote No:", 14, detailsY);
+        doc.text("Date:", 90, detailsY);
+        doc.text("Valid Until:", 155, detailsY);
+
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(...textMuted);
+
+        doc.text(q.quotationNumber, 34, detailsY);
+        doc.text(formatDate(q.issueDate), 104, detailsY);
+        doc.text(formatDate(q.validityDate), 175, detailsY);
+
+        // === SEPARATOR LINE ===
         doc.setDrawColor(...lightGray);
         doc.setLineWidth(0.5);
-        doc.line(14, maxHeaderY, 196, maxHeaderY);
-        maxHeaderY += 10;
+        doc.line(14, detailsY + 5, pageWidth - 14, detailsY + 5);
 
         // ==========================================
-        // 3. CLIENT DETAILS (QUOTATION FOR)
+        // 2. CLIENT DETAILS (QUOTATION FOR)
         // ==========================================
+        let maxHeaderY = detailsY + 15;
         doc.setFontSize(8);
         doc.setTextColor(...textMuted);
         doc.setFont("helvetica", "bold");
@@ -417,199 +563,331 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         maxHeaderY += 6;
         doc.setFontSize(14);
         doc.setTextColor(...deepEclipse);
+        doc.setFont("helvetica", "bold");
         doc.text(q.clientName, 14, maxHeaderY);
 
-        maxHeaderY += 5;
+        maxHeaderY += 5.5; // Gap between client name and their contact details matching the next line spacing
         doc.setFontSize(9);
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(...deepEclipse);
-
-        if (q.clientEmail && q.clientEmail !== "No Email Registered" && q.clientEmail.trim() !== "") {
-            doc.text(q.clientEmail, 14, maxHeaderY);
-            maxHeaderY += 4.5;
-        }
-        if (q.clientPhone && q.clientPhone.trim() !== "") {
-            doc.text(q.clientPhone, 14, maxHeaderY);
-            maxHeaderY += 4.5;
-        }
-        if (q.clientAddress && q.clientAddress.trim() !== "") {
-            const splitAddress = doc.splitTextToSize(q.clientAddress, 80);
-            doc.text(splitAddress, 14, maxHeaderY);
-            maxHeaderY += (splitAddress.length * 4.5);
-        }
-
-        // ==========================================
-        // 4. ITEMS TABLE 
-        // ==========================================
-        const tableStartY = maxHeaderY + 8;
-
-        const tableBody = q.items.map((item, idx) => [
-            idx + 1,
-            item.description,
-            item.quantity,
-            `Rs. ${item.unitPrice.toLocaleString()}`,
-            `Rs. ${item.total.toLocaleString()}`
-        ]);
-
-        autoTable(doc, {
-            startY: tableStartY,
-            head: [['#', 'DESCRIPTION', 'QTY', 'UNIT PRICE', 'TOTAL']],
-            body: tableBody,
-            theme: 'plain',
-            headStyles: {
-                fillColor: [248, 250, 252],
-                textColor: textMuted,
-                fontStyle: 'bold',
-                fontSize: 8,
-                halign: 'left' // Default left
-            },
-            bodyStyles: {
-                fontSize: 9,
-                textColor: deepEclipse,
-            },
-            columnStyles: {
-                0: { cellWidth: 12, halign: 'left' },
-                1: { cellWidth: 83, halign: 'left' },
-                2: { cellWidth: 15, halign: 'center' },
-                3: { cellWidth: 35, halign: 'right' },
-                4: { cellWidth: 35, halign: 'right', fontStyle: 'bold', textColor: deepEclipse }
-            },
-            alternateRowStyles: {
-                fillColor: [255, 255, 255]
-            },
-            margin: { left: 14, right: 14 },
-            didParseCell: (data) => {
-                // Force Right-Alignment specifically for the 'UNIT PRICE' and 'TOTAL' headers
-                if (data.section === 'head' && (data.column.index === 3 || data.column.index === 4)) {
-                    data.cell.styles.halign = 'right';
-                }
-                // Force Center alignment for the 'QTY' header
-                if (data.section === 'head' && data.column.index === 2) {
-                    data.cell.styles.halign = 'center';
-                }
-            },
-            didDrawPage: (data) => {
-                doc.setDrawColor(...lightGray);
-                doc.setLineWidth(0.5);
-                doc.line(14, data.settings.startY, 196, data.settings.startY);
-            },
-            didDrawCell: (data) => {
-                if (data.row.section === 'body') {
-                    doc.setDrawColor(241, 245, 249);
-                    doc.setLineWidth(0.5);
-                    doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height);
-                }
-            }
-        });
-
-        // ==========================================
-        // 5. TOTALS SECTION
-        // ==========================================
-        const finalY = (doc as any).lastAutoTable.finalY || tableStartY + 50;
-
-        // Exact Alignment Setup
-        const rightEdge = 196; // Right margin exactly matching table column 
-        const totalsBoxX = 135; // Shifted left to prevent text overlap with large numbers
-        let totalsY = finalY + 15;
-
-        doc.setFontSize(9);
         doc.setTextColor(...textMuted);
-        doc.setFont("helvetica", "normal");
-        doc.text("Subtotal", totalsBoxX, totalsY);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(...deepEclipse);
-        doc.text(`Rs. ${q.subtotal.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
 
-        if (q.discount && q.discount > 0) {
+        // 1. Address
+        if (q.clientAddress && q.clientAddress.trim() !== "") {
+            const cleanAddr = q.clientAddress.replace(/^[,\s*]+|[,\s*]+$/g, '').trim(); 
+            if (cleanAddr) {
+                const splitAddress = doc.splitTextToSize(cleanAddr, 80);
+                doc.text(splitAddress, 14, maxHeaderY);
+                maxHeaderY += (splitAddress.length * 4.5);
+            }
+        }
+        
+        // 2. Phone / Mobile
+        if (q.clientPhone && q.clientPhone.trim() !== "") {
+            let cp = q.clientPhone.replace(/[\*\,]/g, ''); 
+            let digits = cp.replace(/[^\d+]/g, ''); 
+            
+            if (digits.length >= 10 && digits.length <= 15) {
+                if (digits.startsWith('+91') && digits.length === 13) {
+                    cp = digits.replace(/(\+91)(\d{5})(\d{5})/, '$1 $2 $3');
+                } else if (!digits.startsWith('+') && digits.length === 10) {
+                    cp = digits.replace(/(\d{5})(\d{5})/, '$1 $2');
+                } else {
+                    cp = digits;
+                }
+            } else {
+                cp = cp.replace(/\s+/g, ' ').trim();
+            }
+            
+            if (cp) {
+                doc.text(cp, 14, maxHeaderY);
+                maxHeaderY += 4.5;
+            }
+        }
+
+        // 3. Email
+        if (q.clientEmail && q.clientEmail !== "No Email Registered" && q.clientEmail.trim() !== "") {
+            doc.text(q.clientEmail.trim(), 14, maxHeaderY);
+            maxHeaderY += 4.5;
+        }
+
+
+        // ==========================================
+        // 4. ITEMS TABLE OR CUSTOM HTML
+        // ==========================================
+        if (q.isCustomHtml && q.customHtmlContent) {
+            const container = document.createElement('div');
+            container.innerHTML = q.customHtmlContent;
+            container.style.width = '688px'; // matches width:182mm at 96dpi (182/210*794)
+            container.style.padding = '0px'; // no padding — doc.html margins handle spacing
+            container.style.position = 'absolute';
+            container.style.top = '0px';
+            container.style.left = '0px';
+            container.style.zIndex = '-9999';
+            container.style.opacity = '1';
+            container.style.backgroundColor = 'white';
+            container.style.color = '#0f172a';
+
+            const style = document.createElement('style');
+            style.innerHTML = `
+                * { box-sizing: border-box; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+                /* Zero out top margin on the very first element so there's no gap after client section */
+                *:first-child { margin-top: 0 !important; margin-block-start: 0 !important; padding-top: 0 !important; }
+                h1, h2, h3, h4, h5, h6 { color: #0A0028; margin-top: 0; }
+                p { line-height: 1.7; color: #64748b; font-size: 14px; margin-top: 0; }
+                ul { margin-top: 6px; padding-left: 18px; color: #64748b; font-size: 13px; line-height: 1.8; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 20px; }
+                th { background-color: #f8fafc; color: #64748b; font-weight: 800; text-align: left; padding: 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 2px solid #e2e8f0; }
+                td { padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 14px; color: #0f172a; }
+                .total-row td { font-weight: bold; font-size: 15px; border-top: 2px solid #e2e8f0; }
+                .text-right { text-align: right; }
+                hr { border: none; border-top: 1px solid #e2e8f0; margin: 20px 0; }
+            `;
+
+            container.appendChild(style);
+            document.body.appendChild(container);
+
+            try {
+                const topMargin = 25; // 25mm clears the 14mm continuation header on page 2+ and adds padding
+                await doc.html(container, {
+                    x: 14,
+                    y: (maxHeaderY + 4) - topMargin, // Subtract margin on page 1 so jsPDF doesn't double-add the gap
+                    width: 182,
+                    windowWidth: 688,
+                    margin: [topMargin, 0, 38, 0], // top=25mm, right=0, bottom=38mm (for footer), left=0
+                    autoPaging: 'text' // 'text' instead of 'slice' prevents chopping words/letters in half
+                });
+            } catch (err) {
+                console.error("Custom HTML render failed", err);
+            } finally {
+                document.body.removeChild(container);
+            }
+        } else {
+            const tableStartY = maxHeaderY + 8;
+            const tableBody = q.items.map((item, idx) => [
+                idx + 1,
+                item.description,
+                item.quantity,
+                `Rs. ${item.unitPrice.toLocaleString()}`,
+                `Rs. ${item.total.toLocaleString()}`
+            ]);
+
+            autoTable(doc, {
+                startY: tableStartY,
+                head: [['#', 'DESCRIPTION', 'QTY', 'UNIT PRICE', 'TOTAL']],
+                body: tableBody,
+                theme: 'plain',
+                headStyles: {
+                    fillColor: [248, 250, 252],
+                    textColor: textMuted,
+                    fontStyle: 'bold',
+                    fontSize: 8,
+                    halign: 'left'
+                },
+                bodyStyles: {
+                    fontSize: 9,
+                    textColor: deepEclipse,
+                },
+                columnStyles: {
+                    0: { cellWidth: 12, halign: 'left' },
+                    1: { cellWidth: 83, halign: 'left' },
+                    2: { cellWidth: 15, halign: 'center' },
+                    3: { cellWidth: 35, halign: 'right' },
+                    4: { cellWidth: 35, halign: 'right', fontStyle: 'bold', textColor: deepEclipse }
+                },
+                alternateRowStyles: { fillColor: [255, 255, 255] },
+                margin: { left: 14, right: 14, bottom: 40 }, // Prevent overlapping footer
+                didParseCell: (data) => {
+                    if (data.section === 'head' && (data.column.index === 3 || data.column.index === 4)) data.cell.styles.halign = 'right';
+                    if (data.section === 'head' && data.column.index === 2) data.cell.styles.halign = 'center';
+                },
+                didDrawPage: (data) => {
+                    doc.setDrawColor(...lightGray);
+                    doc.setLineWidth(0.5);
+                    doc.line(14, data.settings.startY, 196, data.settings.startY);
+                },
+                didDrawCell: (data) => {
+                    if (data.row.section === 'body') {
+                        doc.setDrawColor(241, 245, 249);
+                        doc.setLineWidth(0.5);
+                        doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height);
+                    }
+                }
+            });
+
+            // ==========================================
+            // 5. TOTALS SECTION
+            // ==========================================
+            let finalY = (doc as any).lastAutoTable.finalY + 10;
+            const pageHeight = doc.internal.pageSize.height;
+            
+            // Check if totals + terms fit on current page before footer (which is at pageHeight - 35)
+            if (finalY > pageHeight - 75) {
+                doc.addPage();
+                finalY = 20;
+            }
+
+            const rightEdge = 196; 
+            const totalsBoxX = 135; 
+            let totalsY = finalY;
+
+            doc.setFontSize(9);
+            doc.setTextColor(...textMuted);
+            doc.setFont("helvetica", "normal");
+            doc.text("Subtotal", totalsBoxX, totalsY);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...deepEclipse);
+            doc.text(`Rs. ${q.subtotal.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
+
+            if (q.discount && q.discount > 0) {
+                totalsY += 8;
+                doc.setFont("helvetica", "normal");
+                doc.setTextColor(...textMuted);
+                doc.text("Discount", totalsBoxX, totalsY);
+                doc.setFont("helvetica", "bold");
+                doc.setTextColor(225, 29, 72); 
+                doc.text(`-Rs. ${q.discount.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
+            }
+
             totalsY += 8;
+            doc.setDrawColor(...lightGray);
+            doc.setLineWidth(0.5);
+            doc.line(totalsBoxX, totalsY, rightEdge, totalsY);
+
+            totalsY += 8;
+            doc.setFontSize(11);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...deepEclipse);
+            doc.text("TOTAL AMOUNT", totalsBoxX, totalsY);
+
+            doc.setFontSize(14);
+            doc.text(`Rs. ${q.totalAmount.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
+
+            // ==========================================
+            // 6. TERMS & CONDITIONS
+            // ==========================================
+            let termsY = totalsY + 15;
+            if (termsY > pageHeight - 50) {
+                doc.addPage();
+                termsY = 20;
+            }
+
+            doc.setFontSize(8);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...deepEclipse);
+            doc.text("TERMS & CONDITIONS", 14, termsY);
+
+            termsY += 5;
             doc.setFont("helvetica", "normal");
             doc.setTextColor(...textMuted);
-            doc.text("Discount", totalsBoxX, totalsY);
-            doc.setFont("helvetica", "bold");
-            doc.setTextColor(225, 29, 72); // rose-600
-            doc.text(`-Rs. ${q.discount.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
+            const splitTerms = doc.splitTextToSize(q.termsAndConditions, 100);
+            doc.text(splitTerms, 14, termsY, { lineHeightFactor: 1.5 });
         }
 
-        // Final Total Line
-        totalsY += 8;
-        doc.setDrawColor(...lightGray);
-        doc.setLineWidth(0.5);
-        doc.line(totalsBoxX, totalsY, rightEdge, totalsY);
-
-        totalsY += 8;
-        doc.setFontSize(11);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(...deepEclipse);
-        doc.text("TOTAL AMOUNT", totalsBoxX, totalsY);
-
-        doc.setFontSize(14);
-        doc.text(`Rs. ${q.totalAmount.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
-
         // ==========================================
-        // 6. TERMS & CONDITIONS
+        // 7. DYNAMIC PAGINATED FOOTER + PAGE FRAME
         // ==========================================
-        let termsY = finalY + 15;
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(...deepEclipse);
-        doc.text("TERMS & CONDITIONS", 14, termsY);
+        const pageCount = doc.getNumberOfPages();
+        const royalPurple2: [number, number, number] = [108, 46, 247];
+        const footerBandHeight = 28;
 
-        termsY += 5;
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(...textMuted);
-        const splitTerms = doc.splitTextToSize(q.termsAndConditions, 100);
-        doc.text(splitTerms, 14, termsY, { lineHeightFactor: 1.5 });
+        for(let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            const pageHeight = doc.internal.pageSize.height;
+            const footerBandY = pageHeight - footerBandHeight;
 
-        // ==========================================
-        // 7. PAGE FOOTER (Professional Comprehensive)
-        // ==========================================
-        const pageHeight = doc.internal.pageSize.height;
-        const footerStartY = pageHeight - 35;
-
-        doc.setDrawColor(...lightGray);
-        doc.setLineWidth(0.5);
-        doc.line(14, footerStartY, 196, footerStartY);
-
-        let footY = footerStartY + 6;
-
-        // Render company name on the left inside footer
-        doc.setFontSize(11);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(...deepEclipse);
-        doc.text(co?.companyName || 'Your Company', 14, footY);
-
-        if (co?.tagline && co.tagline.trim() !== "") {
-            footY += 4.5;
-            doc.setFontSize(8);
-            doc.setFont("helvetica", "italic");
-            doc.setTextColor(...textMuted);
-            doc.text(co.tagline, 14, footY);
-        }
-
-        // Render company contacts cleanly aligned right in the footer
-        let rightFootY = footerStartY + 6;
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(...textMuted);
-
-        if (co?.contacts && co.contacts.length > 0) {
-            // Limit to 4 contacts in footer, render them right-aligned, stacked
-            let footerContacts = [...co.contacts];
-
-            // Assume 0 is address, others are phone/email/web.
-            // Let's print the address on the left and the others on the right.
-            const address = footerContacts.shift()?.value || "";
-            if (address) {
-                const addSplit = doc.splitTextToSize(address, 80);
-                footY += 6;
-                doc.text(addSplit, 14, footY);
+            // === CONTINUATION MINI-HEADER (Pages 2+) ===
+            if (i > 1) {
+                doc.setFillColor(...deepEclipse);
+                doc.rect(0, 0, pageWidth, 14, 'F');
+                doc.setFontSize(8);
+                doc.setFont("helvetica", "bold");
+                doc.setTextColor(255, 255, 255);
+                doc.text(co?.companyName || 'Your Company', 14, 9);
+                doc.text(`${q.quotationNumber} — continued`, pageWidth - 14, 9, { align: 'right' });
             }
 
-            // Print remaining contacts on the right side
-            footerContacts.slice(0, 3).forEach(c => {
-                doc.text(c.value, 196, rightFootY, { align: 'right' });
-                rightFootY += 4.5;
-            });
+            // === FOOTER: White background, purple accent line ===
+            // Purple separator line (Package Report style)
+            doc.setDrawColor(...royalPurple2);
+            doc.setLineWidth(0.6);
+            doc.line(14, footerBandY, pageWidth - 14, footerBandY);
+
+            // Left: Company Name in dark
+            doc.setFontSize(10);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...deepEclipse);
+            doc.text(co?.companyName || 'Your Company', 14, footerBandY + 8);
+
+            // Left: Tagline in muted
+            if (co?.tagline && co.tagline.trim() !== "") {
+                doc.setFontSize(7.5);
+                doc.setFont("helvetica", "italic");
+                doc.setTextColor(...textMuted);
+                doc.text(co.tagline, 14, footerBandY + 14);
+            }
+
+            // Center: Page number (only if multi-page)
+            if (pageCount > 1) {
+                doc.setFontSize(8);
+                doc.setFont("helvetica", "bold");
+                doc.setTextColor(...royalPurple2);
+                doc.text(`${i}/${pageCount}`, pageWidth / 2, footerBandY + 10, { align: 'center' });
+            }
+            // Right: Dynamic Social Icons from /public/ folder
+            // Map label → fallback if needed, but primarily dynamic
+            const fallbackIconMap: Record<string, string> = {
+                instagram: 'instagram.png',
+                facebook: 'Facebook.png',
+                youtube: 'YouTube.png',
+                linkedin: 'linkedin.png',
+                behance: 'Behance.png',
+                x: 'X.png',
+                twitter: 'X.png',
+                website: 'Website.png',
+                whats: 'whatsapp.png',
+                whatsapp: 'whatsapp.png',
+            };
+            const iconSize = 5;
+            const spacing = 3;
+            let rightX = pageWidth - 14;
+            const iconY = footerBandY + 5;
+
+            const socials = co?.socials ?? [];
+
+            for (let s = socials.length - 1; s >= 0; s--) {
+                const social = socials[s];
+                const rawLabel = social.label ? social.label.toLowerCase().trim() : '';
+                if (!rawLabel) continue;
+
+                const labelKey = rawLabel.replace(/\s+/g, '_');
+                
+                // Use fallback map if it exists (for legacy case-sensitivity), otherwise construct dynamically
+                const iconFile = fallbackIconMap[labelKey] || `${labelKey}.png`;
+                const iconUrl = `/${iconFile}`;
+                try {
+                    // Fetch icon as base64
+                    const resp = await fetch(iconUrl);
+                    if (!resp.ok) throw new Error('icon not found');
+                    const blob = await resp.blob();
+                    const b64: string = await new Promise((res, rej) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => typeof reader.result === 'string' ? res(reader.result) : rej();
+                        reader.onerror = rej;
+                        reader.readAsDataURL(blob);
+                    });
+
+                    const iconX = rightX - iconSize;
+                    doc.addImage(b64, 'PNG', iconX, iconY, iconSize, iconSize);
+
+                    // Make icon clickable
+                    const url = social.value.startsWith('http') ? social.value : `https://${social.value}`;
+                    doc.link(iconX, iconY, iconSize, iconSize, { url });
+
+                    rightX -= (iconSize + spacing);
+                } catch {
+                    // If icon fails to load, skip gracefully
+                }
+            }
         }
 
         // Output PDF
@@ -635,6 +913,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                 finalClientPhone = c.mobile;
             }
         } else {
+            // New client behavior: use Company Name if available, otherwise Person Name
             finalClientName = newClientCompany || newClientName;
             finalClientEmail = newClientEmail;
             finalClientPhone = newClientPhone;
@@ -643,7 +922,6 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         const service = services.find(s => s.id === demoServiceId);
 
         const newDemo: Omit<QuotationDemo, 'id'> = {
-            clientId: clientType === 'existing' ? selectedClientId : undefined,
             clientName: finalClientName,
             clientEmail: finalClientEmail,
             clientPhone: finalClientPhone,
@@ -657,16 +935,32 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             isNewClient: clientType === 'new'
         };
 
+        // Only add clientId if it's an existing client
+        if (clientType === 'existing' && selectedClientId) {
+            newDemo.clientId = selectedClientId;
+        }
+
         try {
             await addQuotationDemoToDB(newDemo);
+            
+            // Success: Close and Reset everything
             setIsCreatingDemo(false);
             setDemoDescription('');
             setDemoServiceId('');
             setDemoAssignedEmployee('');
+            setDemoAllocationDate(new Date().toISOString().split('T')[0]);
+            
+            // Shared Client State Reset
             setClientType('existing');
             setSelectedClientId('');
             setNewClientName('');
             setNewClientCompany('');
+            setNewClientEmail('');
+            setNewClientPhone('');
+            setClientAddress('');
+            setClientSearchTerm('');
+            setIsClientDropdownOpen(false);
+            
         } catch (err) {
             console.error(err);
             alert("Error saving demo.");
@@ -922,6 +1216,13 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                         </td>
                                         <td className="px-8 py-5 text-right flex justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button
+                                                onClick={() => handleEditClick(q)}
+                                                className="p-2.5 bg-slate-50 text-slate-600 rounded-xl hover:bg-slate-800 hover:text-white transition-all shadow-sm active:scale-95 border border-slate-100 hover:border-slate-800 flex items-center justify-center"
+                                                title="Edit Quotation"
+                                            >
+                                                <Pencil size={14} className="stroke-[2.5]" />
+                                            </button>
+                                            <button
                                                 onClick={() => generateQuotationPDF(q)}
                                                 className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm active:scale-95 border border-blue-100 hover:border-blue-600 flex items-center justify-center"
                                                 title="Export Direct PDF"
@@ -1031,9 +1332,11 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                             <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-2xl">
                                 <div>
                                     <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                                        Create Quotation
+                                        {isEditing ? 'Edit Quotation' : 'Create Quotation'}
                                     </h2>
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Professional layout</p>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                                        {isEditing ? 'Update existing proposal' : 'Professional layout'}
+                                    </p>
                                 </div>
                                 <button onClick={resetForm} className="w-8 h-8 bg-slate-50 text-slate-500 rounded-lg flex items-center justify-center hover:bg-slate-100 hover:text-slate-700 transition-all">
                                     <X size={18} />
@@ -1065,16 +1368,68 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
 
                                     <div className="flex flex-col gap-5">
                                         {clientType === 'existing' ? (
-                                            <div>
+                                            <div className="relative" ref={dropdownRef}>
                                                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Client <span className="text-rose-500">*</span></label>
-                                                <select
-                                                    value={selectedClientId}
-                                                    onChange={(e) => setSelectedClientId(e.target.value)}
-                                                    className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm font-medium"
+                                                
+                                                {/* Replaced native select with custom searchable dropdown */}
+                                                <div 
+                                                    className={`w-full p-3 border ${isClientDropdownOpen ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200'} rounded-xl bg-white flex justify-between items-center cursor-pointer transition-all`}
+                                                    onClick={() => setIsClientDropdownOpen(!isClientDropdownOpen)}
                                                 >
-                                                    <option value="">-- Choose Existing Client --</option>
-                                                    {clients.map(c => <option key={c.id} value={c.id}>{c.companyName || c.name} ({c.mobile})</option>)}
-                                                </select>
+                                                    <span className={`text-sm font-medium truncate ${selectedClientId ? 'text-slate-800' : 'text-slate-400'}`}>
+                                                        {selectedClientId 
+                                                            ? (() => {
+                                                                const c = clients.find(c => c.id === selectedClientId);
+                                                                return c ? `${c.companyName || c.name} (${c.mobile})` : 'Select Client';
+                                                              })()
+                                                            : '-- Choose Existing Client --'}
+                                                    </span>
+                                                    <Navigation size={14} className={`text-slate-400 transition-transform duration-200 ${isClientDropdownOpen ? 'rotate-180' : 'rotate-90'}`} />
+                                                </div>
+
+                                                {isClientDropdownOpen && (
+                                                    <div className="absolute z-[100] w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-72 flex flex-col overflow-hidden">
+                                                        <div className="p-2 border-b border-slate-100 flex items-center bg-slate-50/50">
+                                                            <Search size={14} className="text-slate-400 ml-2 shrink-0" />
+                                                            <input 
+                                                                type="text" 
+                                                                placeholder="Search by name, company, or phone..." 
+                                                                className="w-full p-2 outline-none text-sm bg-transparent"
+                                                                value={clientSearchTerm}
+                                                                onChange={(e) => setClientSearchTerm(e.target.value)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                autoFocus
+                                                            />
+                                                        </div>
+                                                        <div className="overflow-y-auto flex-1 p-1 custom-scrollbar">
+                                                            <div 
+                                                                className={`p-3 text-sm rounded-lg cursor-pointer transition-colors ${!selectedClientId ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
+                                                                onClick={() => { setSelectedClientId(''); setIsClientDropdownOpen(false); setClientSearchTerm(''); }}
+                                                            >
+                                                                -- Choose Existing Client --
+                                                            </div>
+                                                            {clients.filter(c => {
+                                                                const searchStr = (`${c.companyName || ''} ${c.name || ''} ${c.mobile || ''}`).toLowerCase();
+                                                                return searchStr.includes(clientSearchTerm.toLowerCase());
+                                                            }).map(c => (
+                                                                <div 
+                                                                    key={c.id} 
+                                                                    className={`p-3 text-sm rounded-lg cursor-pointer transition-colors truncate flex items-center justify-between ${selectedClientId === c.id ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
+                                                                    onClick={() => { setSelectedClientId(c.id); setIsClientDropdownOpen(false); setClientSearchTerm(''); }}
+                                                                >
+                                                                    <span className="truncate">{c.companyName || c.name}</span>
+                                                                    <span className={`text-xs ml-2 shrink-0 ${selectedClientId === c.id ? 'text-blue-500' : 'text-slate-400'}`}>({c.mobile})</span>
+                                                                </div>
+                                                            ))}
+                                                            {clients.filter(c => (`${c.companyName || ''} ${c.name || ''} ${c.mobile || ''}`).toLowerCase().includes(clientSearchTerm.toLowerCase())).length === 0 && (
+                                                                <div className="p-4 text-center text-sm text-slate-400 flex flex-col items-center justify-center gap-2">
+                                                                    <Search size={16} className="opacity-50" />
+                                                                    <span>No clients found matching "{clientSearchTerm}"</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (
                                             <>
@@ -1133,11 +1488,31 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                 </div>
 
                                 {/* RIGHT SIDE: Items & Totals */}
-                                <div className="w-full lg:w-[68%] p-6 flex flex-col gap-8">
+                                <div className="w-full lg:w-[68%] p-6 flex flex-col gap-6">
 
-                                    {/* Items Table */}
-                                    <div>
-                                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                                    {/* Layout Toggle */}
+                                    <div className="flex bg-slate-100 p-1 rounded-lg w-fit">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCustomHtml(false)}
+                                            className={`px-4 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-md transition-all ${!isCustomHtml ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >
+                                            Standard Layout
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCustomHtml(true)}
+                                            className={`px-4 py-1.5 text-[11px] font-black uppercase tracking-wider rounded-md transition-all ${isCustomHtml ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >
+                                            Custom HTML
+                                        </button>
+                                    </div>
+
+                                    {!isCustomHtml ? (
+                                        <>
+                                            {/* Items Table */}
+                                            <div>
+                                                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                                             <table className="w-full text-left">
                                                 <thead>
                                                     <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -1243,6 +1618,21 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                             </div>
                                         </div>
                                     </div>
+                                    </>
+                                ) : (
+                                        <div className="flex-1 flex flex-col min-h-[400px]">
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center justify-between">
+                                                <span>Custom HTML Code</span>
+                                                <span className="text-blue-500 normal-case font-medium">Rendered directly onto PDF body</span>
+                                            </label>
+                                            <textarea
+                                                value={customHtmlContent}
+                                                onChange={(e) => setCustomHtmlContent(e.target.value)}
+                                                placeholder="<div class='custom-proposal'>...</div>\n\nPaste your HTML & Inline CSS here..."
+                                                className="w-full flex-1 p-4 border border-slate-200 rounded-xl bg-slate-900 text-green-400 font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600 resize-none"
+                                            />
+                                        </div>
+                                    )}
 
                                 </div>
                             </div>
@@ -1261,7 +1651,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                     onClick={handleSaveQuotation}
                                     className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-blue-700 transition-all shadow-md flex items-center gap-2"
                                 >
-                                    <CheckCircle size={16} /> Save Quotation
+                                    <CheckCircle size={16} /> {isEditing ? 'Update Quotation' : 'Save Quotation'}
                                 </button>
                             </div>
                         </div>

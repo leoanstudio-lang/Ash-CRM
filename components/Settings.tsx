@@ -645,17 +645,29 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                   </button>
                 </div>
                 <div className="space-y-4">
-                  {companyForm.socials?.map((social, index) => (
+                  {companyForm.socials?.map((social, index) => {
+                    const rawLabel = social.label.toLowerCase().trim().replace(/\s+/g, '_');
+                    const labelKey = (rawLabel === 'whats' || rawLabel === 'wa') ? 'whatsapp' : rawLabel;
+                    const expectedFilename = `${labelKey}.png`;
+                    
+                    return (
                     <div key={social.id} className="flex gap-4 items-start animate-in fade-in slide-in-from-left-2 duration-300">
                       <div className="flex-1">
                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Platform (e.g. Website, Instagram)</label>
-                        <input
-                          required
-                          className="w-full p-4 border border-slate-200 rounded-2xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                          placeholder="Platform"
-                          value={social.label}
-                          onChange={e => updateSocial(social.id, 'label', e.target.value)}
-                        />
+                        <div className="relative">
+                          <input
+                            required
+                            className="w-full p-4 border rounded-2xl bg-white border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                            placeholder="Platform"
+                            value={social.label}
+                            onChange={e => updateSocial(social.id, 'label', e.target.value)}
+                          />
+                          {social.label.trim() !== '' && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black px-2 py-1 rounded-lg bg-slate-100 text-slate-500">
+                              Uses: /{expectedFilename}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex-[2]">
                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">URL / Link</label>
@@ -671,9 +683,16 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                             <Trash2 size={18} />
                           </button>
                         </div>
+                        {social.label.trim() !== '' && (
+                          <p className="text-[10px] text-slate-400 mt-1.5 ml-1">
+                            Upload <span className="font-bold text-slate-500">{expectedFilename}</span> to the <span className="font-bold text-slate-500">/public/</span> folder to show this icon in PDFs.
+                          </p>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
+
                   {(!companyForm.socials || companyForm.socials.length === 0) && (
                     <p className="text-sm text-slate-400 italic text-center py-4 bg-white rounded-2xl border border-dashed border-slate-200">No web or social links added yet.</p>
                   )}

@@ -7,6 +7,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { addProjectToDB, addPackageToDB, updatePackageInDB, deletePackageFromDB, addPaymentAlertToDB, getCompanyProfile } from '../lib/db';
+import { processAutomaticRevenue } from '../lib/accounting';
 
 type GraphicsTab = 'tasks' | 'packages' | 'clients';
 
@@ -239,11 +240,12 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
         const m = newPackage.milestones[i];
         const pm = paymentMilestones[i];
         if (m.isAdvance) {
-          await addPaymentAlertToDB({
+          const alertId = await addPaymentAlertToDB({
             clientId: newPackage.clientId,
             clientName: client?.name || '',
             packageId: newPackageId,
             packageName: newPackage.packageName,
+            packagePeriod: newPackage.period,
             milestoneLabel: pm.label,
             amount: pm.amountDue,
             status: 'received',
@@ -251,6 +253,28 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
             resolvedAt: new Date().toISOString(),
             type: 'package', department: 'Graphics Designing'
           });
+
+          // Auto-write accounting journal entry for advance
+          if (alertId && pm.amountDue > 0) {
+            await processAutomaticRevenue(
+              {
+                id: alertId,
+                clientId: newPackage.clientId,
+                clientName: client?.name || '',
+                packageId: newPackageId,
+                packageName: newPackage.packageName,
+                packagePeriod: newPackage.period,
+                milestoneLabel: pm.label,
+                amount: pm.amountDue,
+                status: 'received',
+                triggeredAt: new Date().toISOString(),
+                resolvedAt: new Date().toISOString(),
+                type: 'package',
+                department: 'Graphics Designing'
+              },
+              pm.amountDue
+            );
+          }
         } else if (m.triggerAtQuantity === 0) {
           // Non-advance but triggers at start = due immediately
           await addPaymentAlertToDB({
@@ -258,6 +282,7 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
             clientName: client?.name || '',
             packageId: newPackageId,
             packageName: newPackage.packageName,
+            packagePeriod: newPackage.period,
             milestoneLabel: pm.label,
             amount: pm.amountDue,
             status: 'due',
@@ -651,17 +676,59 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
       }
 
       // Draw Socials/Links gracefully on a new line below
-      let socialsY = footerY + 12;
+      // Draw Socials/Links gracefully as dynamic icons
+      let socialsY = footerY + 7;
       if (companyConfig.socials && companyConfig.socials.length > 0) {
-        doc.setFont(undefined, 'bold');
+        const fallbackIconMap: Record<string, string> = {
+          instagram: 'instagram.png',
+          facebook: 'Facebook.png',
+          youtube: 'YouTube.png',
+          linkedin: 'linkedin.png',
+          behance: 'Behance.png',
+          x: 'X.png',
+          twitter: 'X.png',
+          website: 'Website.png',
+          whats: 'whatsapp.png',
+          whatsapp: 'whatsapp.png',
+        };
+
+        const iconSize = 4.5;
+        const spacing = 3;
         let socialX = 14;
-        companyConfig.socials.slice(0, 4).forEach(social => {
-          // Render clickable tiny social links
-          const txt = `${social.label}`;
-          doc.setTextColor(59, 130, 246); // blue-500
-          doc.textWithLink(txt, socialX, socialsY, { url: social.value.startsWith('http') ? social.value : `https://${social.value}` });
-          socialX += doc.getTextWidth(txt) + 8; // Spacing between links
-        });
+
+        const socials = companyConfig.socials ?? [];
+
+        for (const social of socials) {
+          const rawLabel = social.label ? social.label.toLowerCase().trim() : '';
+          if (!rawLabel) continue;
+
+          const labelKey = rawLabel.replace(/\s+/g, '_');
+          const iconFile = fallbackIconMap[labelKey] || `${labelKey}.png`;
+          const iconUrl = `/${iconFile}`;
+
+          try {
+            // Fetch icon as base64
+            const resp = await fetch(iconUrl);
+            if (!resp.ok) throw new Error('icon not found');
+            const blob = await resp.blob();
+            const b64: string = await new Promise((res, rej) => {
+              const reader = new FileReader();
+              reader.onloadend = () => typeof reader.result === 'string' ? res(reader.result) : rej();
+              reader.onerror = rej;
+              reader.readAsDataURL(blob);
+            });
+
+            doc.addImage(b64, 'PNG', socialX, socialsY, iconSize, iconSize);
+
+            // Make icon clickable
+            const url = social.value.startsWith('http') ? social.value : `https://${social.value}`;
+            doc.link(socialX, socialsY, iconSize, iconSize, { url });
+
+            socialX += (iconSize + spacing);
+          } catch {
+            // If icon fails to load, skip gracefully
+          }
+        }
       }
     }
 
@@ -2452,13 +2519,16 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                   </div>
                   <div className="space-y-1.5">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Period</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. February 2026"
+                    <select
                       className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none"
                       value={newPackage.period}
                       onChange={e => setNewPackage({ ...newPackage, period: e.target.value })}
-                    />
+                    >
+                      <option value="">Select month...</option>
+                      {MONTHS.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
@@ -2660,12 +2730,16 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
                   </div>
                   <div className="space-y-2">
                     <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Period</label>
-                    <input
+                    <select
                       className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 text-sm outline-none focus:border-violet-500"
-                      placeholder="e.g. February"
                       value={editPackageForm.period}
                       onChange={e => setEditPackageForm({ ...editPackageForm, period: e.target.value })}
-                    />
+                    >
+                      <option value="">Select month...</option>
+                      {MONTHS.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 

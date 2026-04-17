@@ -1,5 +1,5 @@
 import { db } from './firebase';
-import { collection, doc, setDoc, query, where, getDocs, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, query, where, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
 import { JournalEntry, JournalEntryLine, AccountingCategory, AccountingAsset, AccountingLoan, PaymentAlert } from '../types';
 
 function generateId() {
@@ -13,7 +13,8 @@ export async function createJournalEntry(
     remarks: string,
     entries: JournalEntryLine[],
     referenceId?: string,
-    createdBy?: string
+    createdBy?: string,
+    periodMonth?: string
 ): Promise<string> {
     // Validate double entry (Debits = Credits)
     const totalDebits = entries.filter(e => e.type === 'DEBIT').reduce((sum, e) => sum + e.amount, 0);
@@ -43,7 +44,8 @@ export async function createJournalEntry(
         remarks,
         entries,
         createdBy: createdBy || 'System',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        ...(periodMonth ? { periodMonth } : {})
     };
 
     await setDoc(entryDoc, journalEntry);
@@ -58,7 +60,8 @@ export async function recordRevenue(
     date: string,
     remarks: string,
     referenceId?: string,
-    createdBy?: string
+    createdBy?: string,
+    periodMonth?: string
 ) {
     const entries: JournalEntryLine[] = [
         {
@@ -77,7 +80,7 @@ export async function recordRevenue(
         }
     ];
 
-    return createJournalEntry(date, 'Revenue', remarks, entries, referenceId, createdBy);
+    return createJournalEntry(date, 'Revenue', remarks, entries, referenceId, createdBy, periodMonth);
 }
 
 // Helper: Record Expense
@@ -270,6 +273,14 @@ export async function processAutomaticRevenue(alert: PaymentAlert, actualAmount:
             return;
         }
 
+        // Build a periodMonth string from the alert's packagePeriod (e.g. "April" → "April 2026")
+        let periodMonth: string | undefined;
+        if (alert.packagePeriod) {
+            // If it already has a year (e.g. "April 2026"), use as-is; otherwise append current year
+            const hasYear = /\d{4}/.test(alert.packagePeriod);
+            periodMonth = hasYear ? alert.packagePeriod : `${alert.packagePeriod} ${new Date().getFullYear()}`;
+        }
+
         await recordRevenue(
             actualAmount,
             revenueCat,
@@ -277,7 +288,8 @@ export async function processAutomaticRevenue(alert: PaymentAlert, actualAmount:
             new Date().toISOString(),
             `Auto-Revenue: ${alert.clientName} - ${alert.packageName || alert.taskName || 'N/A'}`,
             alert.id, // Use alert.id as referenceId to prevent duplicates
-            'System Auto'
+            'System Auto',
+            periodMonth
         );
     } catch (e) {
         console.error("Error processing auto revenue", e);
@@ -286,6 +298,10 @@ export async function processAutomaticRevenue(alert: PaymentAlert, actualAmount:
 
 export async function deleteJournalEntry(id: string) {
     await deleteDoc(doc(db, 'journal_entries', id));
+}
+
+export async function updateJournalEntry(id: string, updates: Partial<Pick<JournalEntry, 'periodMonth' | 'remarks'>>) {
+    await updateDoc(doc(db, 'journal_entries', id), updates);
 }
 
 export async function deleteAsset(id: string) {

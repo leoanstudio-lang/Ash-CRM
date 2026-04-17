@@ -92,6 +92,11 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
   // No Response Pool filters
   const [nrpCampaignFilter, setNrpCampaignFilter] = useState<string>('all');
   const [nrpSearch, setNrpSearch] = useState<string>('');
+  // Active Deals filters
+  const [activeDealsCampaignFilter, setActiveDealsCampaignFilter] = useState<string>('all');
+  const [activeDealsSearch, setActiveDealsSearch] = useState<string>('');
+  // Campaign Prospects search
+  const [campaignSearch, setCampaignSearch] = useState<string>('');
   // Copy to Campaign panel
   const [showCopyPanel, setShowCopyPanel] = useState<boolean>(false);
   const [copyTargetCampaignId, setCopyTargetCampaignId] = useState<string>('');
@@ -154,22 +159,24 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             const url = val.startsWith('http') ? val : `https://linkedin.com/in/${val}`;
             return <a href={url} target="_blank" rel="noreferrer" className="hover:underline inline-flex items-center gap-1">{val} <span className="text-[8px] opacity-70">↗</span></a>;
           }
-          if (match.type === 'whatsapp') {
+          if (match.type === 'phone' || match.type === 'whatsapp') {
             const cleanNum = val.replace(/\D/g, '');
             return <a href={`https://wa.me/${cleanNum}`} target="_blank" rel="noreferrer" className="hover:underline inline-flex items-center gap-1">{val} <span className="text-[8px] opacity-70">↗</span></a>;
           }
           if (match.type === 'email') {
             return <a href={`mailto:${val}`} className="hover:underline inline-flex items-center gap-1">{val} <span className="text-[8px] opacity-70">↗</span></a>;
           }
-          if (match.type === 'phone') {
-            return <a href={`tel:${val}`} className="hover:underline inline-flex items-center gap-1">{val} <span className="text-[8px] opacity-70">↗</span></a>;
-          }
           return val;
         }
       }
       return prospect.contactMethods[0].value;
     }
-    return prospect.email || prospect.mobile || 'No Contact Info';
+    if (prospect.email) return <a href={`mailto:${prospect.email}`} className="hover:underline inline-flex items-center gap-1">{prospect.email} <span className="text-[8px] opacity-70">↗</span></a>;
+    if (prospect.mobile) {
+      const cleanNum = prospect.mobile.replace(/\D/g, '');
+      return <a href={`https://wa.me/${cleanNum}`} target="_blank" rel="noreferrer" className="hover:underline inline-flex items-center gap-1">{prospect.mobile} <span className="text-[8px] opacity-70">↗</span></a>;
+    }
+    return 'No Contact Info';
   };
 
   const getContactIcons = (prospect: any) => {
@@ -453,6 +460,20 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
           }],
           createdAt: new Date().toISOString()
         });
+        
+        // --- INBOUND: Auto-Sync to Google Contacts ---
+        if (googleToken) {
+          import('../lib/googleContacts').then(({ saveContactToGoogle }) => {
+            saveContactToGoogle(googleToken, {
+              firstName: contactName || companyName || 'Imported Prospect',
+              email: legacyEmail || contactMethods.find(m => m.type === 'email')?.value || '',
+              phone: legacyPhone || contactMethods.find(m => m.type === 'phone' || m.type === 'whatsapp')?.value || '',
+              company: companyName || '',
+              jobTitle: categoryBadge || 'Inbound Lead'
+            }).catch(e => console.warn('Failed to auto-sync imported contact:', e));
+          });
+        }
+        
         importCount++;
       }
     }
@@ -1843,11 +1864,38 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
                   {/* Prospect Management UI */}
                   {(() => {
-                    const prospectsInCamp = campaignProspects.filter(p => p.campaignId === activeCamp.id);
+                    const prospectsInCamp = campaignProspects
+                      .filter(p => p.campaignId === activeCamp.id)
+                      .filter(p => {
+                        if (!campaignSearch) return true;
+                        const s = campaignSearch.toLowerCase();
+                        const name = (p.contactName || p.name || '').toLowerCase();
+                        const company = (p.companyName || p.projectName || '').toLowerCase();
+                        const contact = getPrimaryContact(p);
+                        const contactStr = typeof contact === 'string' ? contact.toLowerCase() : '';
+                        
+                        // Check contact methods values too
+                        const methodsMatch = p.contactMethods?.some((m: any) => 
+                          (m.value || '').toLowerCase().includes(s)
+                        );
+
+                        return name.includes(s) || company.includes(s) || contactStr.includes(s) || methodsMatch;
+                      });
                     return (
                       <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
-                        <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                          <h3 className="font-black text-slate-800 tracking-tight">Campaign Prospects ({prospectsInCamp.length})</h3>
+                        <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                          <h3 className="font-black text-slate-800 tracking-tight flex-shrink-0">Campaign Prospects ({prospectsInCamp.length})</h3>
+                          
+                          <div className="relative flex-1 max-w-md w-full group">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={16} />
+                            <input
+                              type="text"
+                              placeholder="Search prospects by name, company or contact..."
+                              className="w-full pl-12 pr-4 py-2 bg-slate-50 border border-slate-100 focus:border-indigo-500 rounded-2xl outline-none transition-all text-xs font-bold shadow-inner"
+                              value={campaignSearch}
+                              onChange={(e) => setCampaignSearch(e.target.value)}
+                            />
+                          </div>
                         </div>
                         {prospectsInCamp.length === 0 ? (
                           <div className="py-24 text-center">
@@ -2002,7 +2050,15 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             const stages = ['New Prospect', 'Contacted', 'Qualified', 'Proposal Sent', 'Negotiation'];
 
             // Filter to only show deals from the activeDeals collection
-            const activeDealsList = activeDeals || [];
+            const activeDealsList = (activeDeals || []).filter(deal => {
+              const matchesCampaign = activeDealsCampaignFilter === 'all' || deal.campaignId === activeDealsCampaignFilter;
+              const matchesSearch = !activeDealsSearch || 
+                (deal.contactName || deal.name || '').toLowerCase().includes(activeDealsSearch.toLowerCase()) ||
+                (deal.companyName || deal.projectName || '').toLowerCase().includes(activeDealsSearch.toLowerCase()) ||
+                (deal.mobile || '').includes(activeDealsSearch) ||
+                (deal.email || '').toLowerCase().includes(activeDealsSearch.toLowerCase());
+              return matchesCampaign && matchesSearch;
+            });
 
             return (
               <div className="space-y-6">
@@ -2012,7 +2068,21 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                     <p className="text-xs text-slate-500 font-medium">Manage and move outbound prospects through the sales stages.</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <select className="px-4 py-2 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input 
+                        type="text" 
+                        placeholder="Search deals..." 
+                        value={activeDealsSearch}
+                        onChange={(e) => setActiveDealsSearch(e.target.value)}
+                        className="pl-8 pr-4 py-2 w-48 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    </div>
+                    <select 
+                      value={activeDealsCampaignFilter}
+                      onChange={(e) => setActiveDealsCampaignFilter(e.target.value)}
+                      className="px-4 py-2 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                    >
                       <option value="all">All Campaigns</option>
                       {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Client } from '../types';
 import {
   Search, UserPlus, Filter, Download, Plus, Mail,
@@ -15,6 +15,7 @@ interface ClientDBProps {
 
 const ClientDB: React.FC<ClientDBProps> = ({ clients }) => {
   const [search, setSearch] = useState('');
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [clientForm, setClientForm] = useState<Partial<Client>>({
     name: '',
@@ -24,6 +25,15 @@ const ClientDB: React.FC<ClientDBProps> = ({ clients }) => {
     serviceEnquired: '',
     status: 'Active'
   });
+
+  // Initialize Google Contacts client
+  useEffect(() => {
+    import('../lib/googleContacts').then(({ initGoogleClient }) => {
+      initGoogleClient((token) => {
+        setGoogleToken(token);
+      });
+    });
+  }, []);
 
   const filteredClients = clients
     .filter(c =>
@@ -45,6 +55,32 @@ const ClientDB: React.FC<ClientDBProps> = ({ clients }) => {
       dateAdded: new Date().toISOString().split('T')[0],
       status: (clientForm.status as 'Active' | 'Inactive') || 'Active'
     };
+
+    // Google Contacts Sync Logic
+    if (googleToken) {
+      try {
+        const { saveContactToGoogle } = await import('../lib/googleContacts');
+        const resourceName = await saveContactToGoogle(googleToken, {
+          firstName: clientForm.name!,
+          email: clientForm.email === 'No Email Registered' ? undefined : clientForm.email,
+          phone: clientForm.mobile === 'Not Provided' ? undefined : clientForm.mobile,
+          company: clientForm.companyName || 'Private Individual',
+          jobTitle: 'Client'
+        });
+
+        if (resourceName) {
+          newClient.googleResourceName = resourceName;
+          console.log('Synced to Google Contacts:', resourceName);
+        }
+      } catch (err) {
+        console.error('Google Sync Error:', err);
+        // We continue anyway so the local record is saved, but we alert the user
+        alert("Client saved locally, but Google Contacts sync failed. Check console for details.");
+      }
+    } else {
+      // If no token, we can optionally request one, but for now we just save locally
+      console.warn('No Google token available for sync');
+    }
 
     await addClientToDB(newClient);
     setShowAddModal(false);

@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { AccountingCategory, JournalEntry } from '../../types';
 import { recordExpense, deleteJournalEntry } from '../../lib/accounting';
+import { getEntryPeriod } from './AccountingLayout';
 import { ArrowDownRight, DollarSign, Wallet, Trash2, CreditCard } from 'lucide-react';
 
 interface ExpenseManagementProps {
     categories: AccountingCategory[];
     journalEntries: JournalEntry[];
+    selectedPeriod: string;
 }
 
-const ExpenseManagement: React.FC<ExpenseManagementProps> = ({ categories, journalEntries }) => {
+const ExpenseManagement: React.FC<ExpenseManagementProps> = ({ categories, journalEntries, selectedPeriod }) => {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [amount, setAmount] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -20,7 +22,12 @@ const ExpenseManagement: React.FC<ExpenseManagementProps> = ({ categories, journ
 
     const expenseCategories = categories.filter(c => c.type === 'Expense' && c.status === 'Active');
     const assetCategories = categories.filter(c => c.type === 'Asset' && c.status === 'Active');
-    const expenseEntries = journalEntries.filter(j => j.type === 'Expense');
+    const allExpenseEntries = journalEntries.filter(j => j.type === 'Expense');
+    const expenseEntries = allExpenseEntries.filter(e => getEntryPeriod(e) === selectedPeriod);
+    const totalExpenses = expenseEntries.reduce((sum, entry) => {
+        const expLine = entry.entries.find(e => e.type === 'DEBIT');
+        return sum + (expLine?.amount || 0);
+    }, 0);
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -85,13 +92,8 @@ const ExpenseManagement: React.FC<ExpenseManagementProps> = ({ categories, journ
                 </div>
 
                 <div className="bg-red-50 border border-red-100 p-6 rounded-xl shadow-sm relative overflow-hidden group">
-                    <h4 className="text-xs font-bold text-red-800 uppercase tracking-wider relative z-10">Total Expenses Recorded</h4>
-                    <p className="text-3xl font-black text-red-600 relative z-10 mt-1">
-                        ₹{expenseEntries.reduce((sum, entry) => {
-                            const expLine = entry.entries.find(e => e.type === 'DEBIT');
-                            return sum + (expLine?.amount || 0);
-                        }, 0).toLocaleString()}
-                    </p>
+                    <h4 className="text-xs font-bold text-red-800 uppercase tracking-wider relative z-10">Expenses for {selectedPeriod}</h4>
+                    <p className="text-3xl font-black text-red-600 relative z-10 mt-1">₹{totalExpenses.toLocaleString()}</p>
                     <div className="absolute -right-6 -top-6 w-32 h-32 bg-red-100 rounded-full blur-3xl group-hover:bg-red-200 transition duration-500"></div>
                 </div>
             </div>
@@ -162,7 +164,10 @@ const ExpenseManagement: React.FC<ExpenseManagementProps> = ({ categories, journ
             {/* Recent Expense List */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-6">
                 <div className="p-5 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                    <h3 className="font-semibold text-slate-800">Recent Expense Entries</h3>
+                    <h3 className="font-semibold text-slate-800">
+                        Expense Entries &nbsp;
+                        <span className="text-[10px] font-black text-red-600 bg-red-50 px-2 py-1 rounded-md border border-red-100 uppercase tracking-widest">{selectedPeriod}</span>
+                    </h3>
                     <span className="text-xs font-bold text-slate-500 bg-white px-2 py-1 rounded border border-slate-200">{expenseEntries.length} Records</span>
                 </div>
                 <div className="p-0">

@@ -1,46 +1,52 @@
 import React, { useMemo } from 'react';
 import { JournalEntry, AccountingAsset, AccountingLoan, AccountingCategory } from '../../types';
 import { calculateDepreciation } from '../../lib/accounting';
+import { getEntryPeriod } from './AccountingLayout';
 import { TrendingUp, TrendingDown, DollarSign, Wallet, Activity, ArrowUpRight, ArrowDownRight, Layers } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+
+const MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+];
 
 interface DashboardProps {
     journalEntries: JournalEntry[];
     assets: AccountingAsset[];
     loans: AccountingLoan[];
     categories: AccountingCategory[];
+    selectedPeriod: string; // e.g. "March 2026"
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, categories }) => {
+const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, categories, selectedPeriod }) => {
     const stats = useMemo(() => {
         let totalRevenue = 0;
         let totalExpense = 0;
         let cashBalance = 0;
 
-        // Let's analyze "This Month" specifically for primary stats
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        // Chart: show last 6 months relative to the selected period
+        const [selMonth, selYear] = selectedPeriod.split(' ');
+        const selMonthIdx = MONTHS.indexOf(selMonth);
+        const selYearNum = parseInt(selYear);
+        const selDate = new Date(selYearNum, selMonthIdx, 1);
 
-        // Create chart data for the last 6 months
         const chartMap: Record<string, { month: string, revenue: number, expense: number }> = {};
         for (let i = 5; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const d = new Date(selYearNum, selMonthIdx - i, 1);
             const name = d.toLocaleString('default', { month: 'short' });
-            chartMap[name] = { month: name, revenue: 0, expense: 0 };
+            chartMap[`${name} ${d.getFullYear()}`] = { month: name, revenue: 0, expense: 0 };
         }
 
         journalEntries.forEach(entry => {
-            const entryDate = new Date(entry.date);
-            const monthName = entryDate.toLocaleString('default', { month: 'short' });
-
-            const isThisMonth = entryDate >= startOfMonth;
+            const entryPeriod = getEntryPeriod(entry); // "March 2026", "April 2026", etc.
+            const isSelectedPeriod = entryPeriod === selectedPeriod;
 
             entry.entries.forEach(line => {
                 const cat = categories.find(c => c.id === line.accountId);
                 if (!cat) return;
 
-                // Only add to monthly stats if it's this month
-                if (isThisMonth) {
+                // Stats for the SELECTED period only
+                if (isSelectedPeriod) {
                     if (cat.type === 'Revenue' && line.type === 'CREDIT') {
                         totalRevenue += line.amount;
                     }
@@ -49,19 +55,23 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
                     }
                 }
 
-                // Add to Cash / Bank Balance universally
+                // Cash & Bank Balance: only include the SELECTED period (Refined per user request)
                 if (cat.isDefault && ['Bank Account', 'UPI Wallet', 'Cash'].includes(cat.name)) {
-                    if (line.type === 'DEBIT') cashBalance += line.amount; // Asset increases via Debit
-                    if (line.type === 'CREDIT') cashBalance -= line.amount; // Asset decreases via Credit
+                    if (isSelectedPeriod) {
+                        if (line.type === 'DEBIT') cashBalance += line.amount;
+                        if (line.type === 'CREDIT') cashBalance -= line.amount;
+                    }
                 }
 
-                // Populate Chart
-                if (chartMap[monthName]) {
+                // Chart: group by entry's effective period for last 6 months relative to selected
+                const [ePeriodMonth, ePeriodYear] = entryPeriod.split(' ');
+                const chartKey = `${ePeriodMonth.substring(0, 3)} ${ePeriodYear}`;
+                if (chartMap[chartKey]) {
                     if (cat.type === 'Revenue' && line.type === 'CREDIT') {
-                        chartMap[monthName].revenue += line.amount;
+                        chartMap[chartKey].revenue += line.amount;
                     }
                     if (cat.type === 'Expense' && line.type === 'DEBIT') {
-                        chartMap[monthName].expense += line.amount;
+                        chartMap[chartKey].expense += line.amount;
                     }
                 }
             });
@@ -70,6 +80,7 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
         const chartData = Object.values(chartMap);
 
         let totalAssetsNBV = 0;
+        const now = new Date();
         assets.forEach(a => {
             totalAssetsNBV += calculateDepreciation(a, now).currentValue;
         });
@@ -82,7 +93,7 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
             netProfitThisMonth: totalRevenue - totalExpense,
             chartData
         };
-    }, [journalEntries, assets, categories]);
+    }, [journalEntries, assets, categories, selectedPeriod]);
 
     return (
         <div className="space-y-6">
@@ -91,7 +102,7 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform"><TrendingUp size={64} /></div>
                     <div className="relative z-10">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Revenue (This Month)</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Revenue ({selectedPeriod})</p>
                         <div className="flex items-end gap-2">
                             <h3 className="text-3xl font-black text-slate-900 tracking-tight">₹{stats.totalRevenue.toLocaleString()}</h3>
                         </div>
@@ -104,7 +115,7 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-6 opacity-10 group-hover:scale-110 transition-transform"><TrendingDown size={64} /></div>
                     <div className="relative z-10">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Expenses (This Month)</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Expenses ({selectedPeriod})</p>
                         <div className="flex items-end gap-2">
                             <h3 className="text-3xl font-black text-slate-900 tracking-tight">₹{stats.totalExpense.toLocaleString()}</h3>
                         </div>
@@ -117,7 +128,7 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
                 <div className="bg-blue-600 text-white p-6 rounded-xl shadow-md relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/10 rounded-full blur-2xl group-hover:bg-white/20 transition-colors"></div>
                     <div className="relative z-10">
-                        <p className="text-[10px] font-black uppercase tracking-widest opacity-80 mb-1">Cash & Bank Balance</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-80 mb-1">Cash & Bank Balance ({selectedPeriod})</p>
                         <div className="flex items-end gap-2">
                             <h3 className="text-3xl font-black tracking-tight">₹{stats.cashBalance.toLocaleString()}</h3>
                         </div>
@@ -149,7 +160,7 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
                     <div className="flex justify-between items-center mb-6">
                         <div>
                             <h3 className="text-lg font-black text-slate-900">Revenue & Expenses Trend</h3>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Last 6 Months Snapshot</p>
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Last 6 Months by Period</p>
                         </div>
                     </div>
                     <div className="h-[300px]">
@@ -182,13 +193,11 @@ const Dashboard: React.FC<DashboardProps> = ({ journalEntries, assets, loans, ca
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
                     <div className="mb-6">
                         <h3 className="text-lg font-black text-slate-900">Profit Margin</h3>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">This Month Performance</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{selectedPeriod} Performance</p>
                     </div>
 
                     <div className="relative flex-1 flex flex-col items-center justify-center">
-                        {/* Circular indicator mock */}
                         <div className="w-56 h-56 rounded-full border-[16px] border-slate-50 relative flex items-center justify-center">
-                            {/* SVGs could render a real progress ring, simplified for component sizing */}
                             <svg className="absolute inset-0 w-full h-full -rotate-90">
                                 <circle cx="96" cy="96" r="80" className="stroke-slate-50 stroke-[16]" fill="none" />
                                 {stats.totalRevenue > 0 && (

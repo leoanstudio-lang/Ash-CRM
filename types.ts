@@ -362,6 +362,7 @@ export interface PaymentAlert {
   clientName: string;
   packageId?: string; // null for standalone tasks
   packageName?: string;
+  packagePeriod?: string; // e.g. "April 2026" — the package's billing period
   projectId?: string; // for standalone task payments
   taskName?: string; // for standalone task payments
   milestoneLabel: string;
@@ -419,6 +420,8 @@ export interface Quotation {
   status: 'Draft' | 'Sent' | 'Approved' | 'Rejected';
   createdAt: string;
   isNewClient: boolean;
+  isCustomHtml?: boolean;
+  customHtmlContent?: string;
 }
 // --- Quotation Demo Types ---
 
@@ -471,6 +474,7 @@ export interface JournalEntry {
   updatedBy?: string;
   updatedAt?: string;
   isVoided?: boolean;
+  periodMonth?: string; // e.g. "April 2026" — the period this revenue belongs to (may differ from receipt date)
 }
 
 export interface AccountingAsset {
