@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 
 interface SalesCRMProps {
   leads: Lead[];
@@ -333,7 +334,7 @@ function DashboardTab({ leads, campaigns, employees }: { leads: Lead[], campaign
   const totalResolved = closedWonCount + closedLostCount;
   const conversionRate = totalResolved > 0 ? ((closedWonCount / totalResolved) * 100).toFixed(1) : '0.0';
 
-  const exportExecutiveReport = () => {
+  const exportExecutiveReport = async () => {
     const doc = new jsPDF();
     doc.setFont("helvetica", "bold");
     doc.setFontSize(20);
@@ -356,6 +357,10 @@ function DashboardTab({ leads, campaigns, employees }: { leads: Lead[], campaign
       ],
       headStyles: { fillColor: [15, 23, 42], fontSize: 11, fontStyle: 'bold' }
     });
+
+    // Stamp watermark on all pages before saving
+    const watermarkB64 = await loadWatermarkBase64();
+    stampWatermarkAllPages(doc, watermarkB64);
 
     doc.save("Executive_Sales_Report.pdf");
   };

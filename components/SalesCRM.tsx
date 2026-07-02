@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lead, Client, Service, Campaign, Channel } from '../types';
+import { Lead, Client, Service, Campaign, Channel, Quotation } from '../types';
 import SalesDashboard from './SalesDashboard';
 import SalesInbound from './SalesInbound';
 import SalesOutbound from './SalesOutbound';
@@ -32,13 +32,17 @@ interface SalesCRMProps {
     autoOpenProspectId?: string | null;
     autoOpenTab?: 'dashboard' | 'inbound' | 'outbound';
     onClearAutoOpen?: () => void;
+    departments?: string[]; // Dynamic list of departments for routing
+    quotations?: Quotation[];
 }
 
 const SalesCRM: React.FC<SalesCRMProps> = ({
     leads, setLeads, setClients, services, campaigns,
     campaignProspects, campaignSequences, activeDeals, nurturingLeads, noResponseLeads, suppressedLeads, channels,
     inboundSources, inboundLeads, inboundActiveDeals, inboundNurturing, inboundNoResponseLeads, inboundSuppressedLeads,
-    autoOpenProspectId, autoOpenTab, onClearAutoOpen
+    autoOpenProspectId, autoOpenTab, onClearAutoOpen,
+    departments = ['Development', 'Graphics Designing', 'Marketing'],
+    quotations = []
 }) => {
     const [activeTab, setActiveTab] = React.useState<'dashboard' | 'inbound' | 'outbound'>(autoOpenTab || 'dashboard');
 
@@ -114,6 +118,8 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
                         channels={channels}
                         autoOpenProspectId={autoOpenProspectId}
                         onClearAutoOpen={onClearAutoOpen}
+                        departments={departments}
+                        quotations={quotations}
                     />
                 )}
                 {activeTab === 'outbound' && (
@@ -125,6 +131,8 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
                         suppressedLeads={suppressedLeads} channels={channels}
                         autoOpenProspectId={autoOpenProspectId}
                         onClearAutoOpen={onClearAutoOpen}
+                        departments={departments}
+                        quotations={quotations}
                     />
                 )}
             </div>

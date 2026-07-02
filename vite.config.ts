@@ -8,6 +8,13 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/google-token': {
+            target: 'https://oauth2.googleapis.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/google-token/, '/token')
+          }
+        }
       },
       plugins: [react()],
       define: {

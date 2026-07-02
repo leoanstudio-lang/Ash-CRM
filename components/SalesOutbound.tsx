@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lead, Client, Service, Campaign, Channel, CampaignSequence } from '../types';
+import { Lead, Client, Service, Campaign, Channel, CampaignSequence, Quotation } from '../types';
 import { Target, Users, Megaphone, Inbox, Search, Filter, Plus, TrendingUp, Calendar, DollarSign, Activity, FileSpreadsheet, Trash2, AlignLeft, Copy, Check, Pencil, X } from 'lucide-react';
 import {
   addCampaignToDB,
@@ -37,6 +37,8 @@ interface SalesOutboundProps {
   channels?: Channel[];
   autoOpenProspectId?: string | null;
   onClearAutoOpen?: () => void;
+  departments?: string[]; // Dynamic department list for routing
+  quotations?: Quotation[]; // Pass live quotations for stage syncing
 }
 
 type OutboundTab = 'overview' | 'campaigns' | 'prospects' | 'nurturing' | 'noResponsePool';
@@ -44,7 +46,9 @@ type OutboundTab = 'overview' | 'campaigns' | 'prospects' | 'nurturing' | 'noRes
 const SalesOutbound: React.FC<SalesOutboundProps> = ({
   leads, setLeads, setClients, services, campaigns = [],
   campaignProspects = [], campaignSequences = [], activeDeals = [], nurturingLeads = [], noResponseLeads = [], suppressedLeads = [], channels = [],
-  autoOpenProspectId, onClearAutoOpen
+  autoOpenProspectId, onClearAutoOpen,
+  departments = ['Development', 'Graphics Designing', 'Marketing'],
+  quotations = []
 }) => {
   const [activeTab, setActiveTab] = useState<OutboundTab>('overview');
   const [showNewCampaignModal, setShowNewCampaignModal] = useState(false);
@@ -112,7 +116,8 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
     startDate: '',
     endDate: '',
     cost: 0,
-    status: 'Active'
+    status: 'Active',
+    department: ''
   });
 
   // Flexible CSV Upload States
@@ -254,7 +259,8 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
         startDate: '',
         endDate: '',
         cost: 0,
-        status: 'Active'
+        status: 'Active',
+        department: ''
       });
       setShowNewCampaignModal(false);
     } catch (error) {
@@ -617,8 +623,48 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
 
       // Bonus points for moving down the pipeline
       if (updates.outboundStage === 'Qualified') newScore += 15;
-      if (updates.outboundStage === 'Proposal Sent') newScore += 20;
+      if (updates.outboundStage === 'Quotation' || updates.outboundStage === 'Proposal Sent') newScore += 20;
       if (updates.outboundStage === 'Negotiation') newScore += 10;
+
+      // --- AUTO-CREATE DRAFT QUOTATION on stage Quotation ---
+      if (updates.outboundStage === 'Quotation') {
+        try {
+          const existingQ = (quotations || []).find((q: any) => q.salesDealId === dealId && q.status !== 'Approved');
+          if (!existingQ) {
+            const { addQuotationToDB } = await import('../lib/db');
+            const campaignName = campaigns.find((c: any) => c.id === deal.campaignId)?.name || '';
+            await addQuotationToDB({
+              quotationNumber: `QT-${Math.floor(100000 + Math.random() * 900000)}`,
+              issueDate: new Date().toISOString().split('T')[0],
+              validityDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+              clientName: deal.contactName || deal.name || 'Unknown',
+              clientEmail: deal.email || '',
+              clientPhone: deal.mobile || '',
+              items: [
+                {
+                  description: `Project Service: ${deal.companyName || deal.projectName || 'General Service'}`,
+                  quantity: 1,
+                  unitPrice: deal.value || 0,
+                  total: deal.value || 0
+                }
+              ],
+              subtotal: deal.value || 0,
+              totalAmount: deal.value || 0,
+              termsAndConditions: "1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.",
+              status: 'Draft',
+              createdAt: new Date().toISOString(),
+              isNewClient: true,
+              salesDealId: dealId,
+              salesType: 'Outbound',
+              sourceCampaignName: campaignName
+            });
+            console.log('Auto-created Draft Quotation for Outbound deal:', dealId);
+          }
+        } catch (qCreateErr) {
+          console.warn('Failed to auto-create quotation (non-blocking):', qCreateErr);
+        }
+      }
+      // --- END AUTO-CREATE ---
 
       // --- MOVE TO NURTURING ---
       if (updates.outboundStage === 'Nurturing') {
@@ -651,9 +697,10 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
         return;
       }
 
-      // --- AUTO-SYNC TO GOOGLE CONTACTS on Proposal Sent / Negotiation (soft save) ---
+      // --- AUTO-SYNC TO GOOGLE CONTACTS on Proposal Sent / Quotation / Negotiation (soft save) ---
       if (
         updates.outboundStage === 'Proposal Sent' ||
+        updates.outboundStage === 'Quotation' ||
         updates.outboundStage === 'Negotiation'
       ) {
         if (googleToken) {
@@ -664,7 +711,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
               email: deal.email || (deal.contactMethods?.find((m: any) => m.type === 'email')?.value) || '',
               phone: deal.mobile || (deal.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value) || '',
               company: deal.companyName || deal.projectName || 'Unknown',
-              jobTitle: updates.outboundStage === 'Proposal Sent' ? 'Prospect (Proposal Sent)' : 'Prospect (Negotiation)'
+              jobTitle: (updates.outboundStage === 'Proposal Sent' || updates.outboundStage === 'Quotation') ? 'Prospect (Quotation Sent)' : 'Prospect (Negotiation)'
             });
             newActivity.description += ` — Saved to Google Contacts`;
             console.log(`Auto-synced to Google Contacts at stage: ${updates.outboundStage}`);
@@ -700,7 +747,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
 
         try {
           const { addClientToDB } = await import('../lib/db');
-          await addClientToDB({
+          const newClient = await addClientToDB({
             name: deal.contactName || deal.name || getPrimaryContact(deal) || 'Unknown',
             companyName: deal.companyName || deal.projectName || '',
             mobile: deal.mobile || (deal.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value) || '',
@@ -712,6 +759,53 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
             createdAt: new Date().toISOString(),
             googleResourceName: resourceName
           });
+
+          // --- AUTO-ROUTE TO DEPARTMENT ---
+          const sourceCampaign = campaigns.find(c => c.id === deal.campaignId);
+          const targetDept = sourceCampaign?.department;
+          if (targetDept) {
+            try {
+              const { addProjectToDB } = await import('../lib/db');
+              const today = new Date();
+              const defaultDeadline = new Date(today);
+              defaultDeadline.setMonth(defaultDeadline.getMonth() + 1);
+              await addProjectToDB({
+                clientId: (newClient as any)?.id || '',
+                clientName: deal.contactName || deal.name || 'Unknown',
+                serviceId: 'SALES_ROUTED',
+                serviceName: targetDept,
+                type: targetDept === 'Development' ? 'Web'
+                  : targetDept === 'Graphics Designing' ? 'Graphic'
+                  : 'Marketing',
+                priority: 'Medium',
+                startDate: today.toISOString().split('T')[0],
+                deadline: defaultDeadline.toISOString().split('T')[0],
+                totalAmount: deal.value || 0,
+                advance: 0,
+                description: `Auto-routed from Outbound campaign: ${sourceCampaign?.name || ''}.`.trim(),
+                status: 'Pending',
+                progress: 0,
+                createdAt: new Date().toISOString()
+              });
+              console.log(`Outbound deal auto-routed to ${targetDept} department.`);
+            } catch (routeErr) {
+              console.warn('Failed to auto-route project (non-blocking):', routeErr);
+            }
+          }
+          // --- END AUTO-ROUTE ---
+
+          // --- AUTO-APPROVE LINKED QUOTATION ---
+          try {
+            const linkedQ = (quotations || []).find((q: any) => q.salesDealId === dealId);
+            if (linkedQ) {
+              const { updateQuotationInDB } = await import('../lib/db');
+              await updateQuotationInDB(linkedQ.id, { status: 'Approved' });
+              console.log('Linked Outbound quotation automatically set to Approved.');
+            }
+          } catch (qErr) {
+            console.warn('Failed to auto-approve linked quotation (non-blocking):', qErr);
+          }
+          // --- END AUTO-APPROVE ---
 
           // Delete from wherever it was
           if (sourceCollection === 'active') await deleteActiveDealFromDB(dealId);
@@ -1082,7 +1176,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                             <option value="New Prospect">New Prospect</option>
                             <option value="Contacted">Contacted</option>
                             <option value="Qualified">Qualified</option>
-                            <option value="Proposal Sent">Proposal Sent</option>
+                            <option value="Quotation">Quotation</option>
                             <option value="Negotiation">Negotiation</option>
                             <option value="Nurturing">🌱 Move to Nurturing</option>
                             <option value="Closed Won">Closed Won</option>
@@ -1570,6 +1664,20 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
                         <input type="number" min="0" className="w-full p-3 pl-8 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
                           value={newCampaign.cost} onChange={e => setNewCampaign({ ...newCampaign, cost: Number(e.target.value) })} required />
                       </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Target Department</label>
+                      <select
+                        className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
+                        value={newCampaign.department || ''}
+                        onChange={e => setNewCampaign({ ...newCampaign, department: e.target.value })}
+                      >
+                        <option value="">— No Department (Client DB only) —</option>
+                        {departments.map(dept => (
+                          <option key={dept} value={dept}>{dept}</option>
+                        ))}
+                      </select>
+                      <p className="text-[9px] text-slate-400 font-medium ml-1">When a deal is Closed Won, the client will be auto-routed to this department.</p>
                     </div>
                   </div>
 
@@ -2153,7 +2261,7 @@ const SalesOutbound: React.FC<SalesOutboundProps> = ({
         {/* --- PROSPECTS TAB --- */}
         {
           activeTab === 'prospects' && (() => {
-            const stages = ['New Prospect', 'Contacted', 'Qualified', 'Proposal Sent', 'Negotiation'];
+            const stages = ['New Prospect', 'Contacted', 'Qualified', 'Quotation', 'Negotiation'];
 
             // Filter to only show deals from the activeDeals collection
             const activeDealsList = (activeDeals || []).filter(deal => {

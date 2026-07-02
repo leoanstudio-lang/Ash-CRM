@@ -74,6 +74,32 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
     });
   };
 
+  const handleGoogleConnect = () => {
+    const clientId = import.meta.env.VITE_GOOGLE_DOCS_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+    if (!clientId) {
+      alert('VITE_GOOGLE_CLIENT_ID is not configured in .env.local!');
+      return;
+    }
+    const scopes = [
+      'email',
+      'profile',
+      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive.metadata.readonly'
+    ].join(' ');
+    
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: window.location.origin,
+      response_type: 'code',
+      scope: scopes,
+      access_type: 'offline',
+      prompt: 'consent select_account'
+    }).toString();
+    
+    window.location.href = authUrl;
+  };
+
   React.useEffect(() => {
     const fetchCompanyData = async () => {
       const data = await getCompanyProfile();
@@ -312,6 +338,7 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                         onChange={e => setEmpForm({ ...empForm, department: e.target.value })}
                       >
                         <option value="Graphic">Graphic Designing</option>
+                        <option value="Marketing">Digital Marketing</option>
                         <option value="Unassigned">Unassigned</option>
                       </select>
                     </div>
@@ -389,6 +416,7 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                       <option value="Graphic Designing">Graphic Designing</option>
                       <option value="Mobile Development">Mobile Development</option>
                       <option value="SEO">SEO</option>
+                      <option value="Digital Marketing">Digital Marketing</option>
                     </select>
                   </div>
                   <div className="flex items-end gap-2">
@@ -590,6 +618,56 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                   )}
                 </div>
                 <p className="text-xs text-slate-500 ml-1 mt-2">Paste a direct link to a transparent .png or .svg of your logo. This will be used in the PDF builder.</p>
+              </div>
+
+              {/* Google Docs & Drive Permanent Integration */}
+              <div className="pt-6 border-t border-slate-200">
+                <h4 className="font-black text-slate-800 flex items-center gap-2 mb-2">
+                  <Globe size={16} className="text-emerald-500" /> Permanent Google Docs & Drive Connection
+                </h4>
+                <p className="text-xs text-slate-500 mb-4 leading-relaxed font-medium">
+                  Establish a single background Google connection for all users. This token is stored in your Firestore database so employees, admins, and client interfaces never need individual sign-ins to view reports or export PDFs.
+                </p>
+                
+                {companyForm.googleRefreshToken ? (
+                  <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-emerald-100 rounded-xl flex items-center justify-center shrink-0 text-emerald-700">
+                        <CheckCircle2 size={18} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-slate-850">Connection Active</p>
+                        <p className="text-[10px] text-slate-500 font-bold">Permanent background refresh token is synced with Firestore.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGoogleConnect}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold transition shadow-sm uppercase tracking-wider font-sans"
+                    >
+                      Reconnect Account
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center shrink-0 text-amber-700">
+                        <Shield size={18} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black text-slate-850">Not Connected</p>
+                        <p className="text-[10px] text-slate-500 font-bold">No refresh token stored. Fallback credentials from environment will be used.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGoogleConnect}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-extrabold transition shadow-sm uppercase tracking-wider font-sans"
+                    >
+                      Connect Company Google Account
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Dynamic Contacts Section */}

@@ -6,6 +6,7 @@ import ExecutionCenter from './components/ExecutionCenter';
 import Strategies from './components/Strategies';
 import Development from './components/Development';
 import GraphicsDesigning from './components/GraphicsDesigning';
+import Marketing from './components/Marketing';
 import SalesCRM from './components/SalesCRM';
 import ClientDB from './components/ClientDB';
 import Notifications from './components/Notifications';
@@ -19,7 +20,7 @@ import ContentStudio from './components/ContentStudio';
 import RiskMonitorModal from './components/Strategies/RiskMonitorModal';
 import AccountingLayout from './components/Accounting/AccountingLayout';
 import { Bell } from 'lucide-react';
-import { subscribeToCollection } from './lib/db';
+import { subscribeToCollection, getCompanyProfile, saveCompanyProfile } from './lib/db';
 import { auth, signOut } from './lib/firebase';
 import { Quotation, QuotationDemo } from './types';
 
@@ -37,6 +38,86 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('sidebar_collapsed', isSidebarCollapsed.toString());
   }, [isSidebarCollapsed]);
+
+  // Google Docs & Drive Permanent Authentication Callback Handler
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+      // Clear code query param from URL so it doesn't run repeatedly on reload
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      const exchangeCodeForRefreshToken = async () => {
+        try {
+          const clientId = import.meta.env.VITE_GOOGLE_DOCS_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+          const clientSecret = import.meta.env.VITE_GOOGLE_DOCS_CLIENT_SECRET || import.meta.env.VITE_GOOGLE_CLIENT_SECRET || '';
+          
+          if (!clientId || !clientSecret) {
+            console.error('Google Client ID or Client Secret is not configured in .env.local');
+            alert('Cannot exchange code: Google Client ID/Secret is missing in .env.local');
+            return;
+          }
+          
+          console.log('Exchanging auth code for tokens via local proxy...');
+          const res = await fetch('/google-token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+              client_id: clientId,
+              client_secret: clientSecret,
+              code: code,
+              grant_type: 'authorization_code',
+              redirect_uri: window.location.origin
+            }).toString()
+          });
+          
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText || `Failed to fetch tokens: ${res.status}`);
+          }
+          
+          const data = await res.json();
+          console.log('Token exchange response:', data);
+          
+          if (data.refresh_token) {
+            // Save to company profile in Firestore
+            const currentProfile = await getCompanyProfile() || {
+              companyName: 'Ash Creative Studio',
+              tagline: '',
+              contacts: [],
+              socials: []
+            };
+            
+            await saveCompanyProfile({
+              ...currentProfile,
+              googleRefreshToken: data.refresh_token,
+              googleClientId: clientId,
+              googleClientSecret: clientSecret
+            });
+            
+            // Also store access token locally so it is instantly available
+            localStorage.setItem('google_doc_oauth_token', JSON.stringify({
+              accessToken: data.access_token,
+              expiresAt: Date.now() + (data.expires_in * 1000)
+            }));
+            
+            alert('Successfully connected Google Docs & Drive permanently! Refresh token is saved to Firestore.');
+            window.location.reload();
+          } else {
+            console.warn('No refresh token returned by Google OAuth. Ensure you approved permissions.');
+            alert('Connected successfully, but Google did not return a refresh token. If you are re-connecting, please disconnect the app from your Google account settings first to force consent prompt.');
+          }
+        } catch (err: any) {
+          console.error('Error exchanging authorization code:', err);
+          alert(`Google connection failed: ${err.message}`);
+        }
+      };
+      
+      exchangeCodeForRefreshToken();
+    }
+  }, []);
 
   // Master State (Synced with Firestore)
   const [clients, setClients] = useState<Client[]>([]);
@@ -259,8 +340,9 @@ const App: React.FC = () => {
       case 'Execution Center': return <ExecutionCenter tasks={executionTasks} clients={clients} projects={projects} employees={employees} />;
       case 'Strategies': return <Strategies strategies={strategies} paymentAlerts={paymentAlerts} />;
       case 'Quotations': return <QuotationsView clients={clients} services={services} employees={employees} />;
-      case 'Development': return <Development clients={clients} projects={projects} setProjects={setProjects} services={services} />;
+      case 'Development': return <Development clients={clients} projects={projects} setProjects={setProjects} services={services} quotations={quotations} employees={employees} />;
       case 'Graphics Designing': return <GraphicsDesigning employees={employees} projects={projects} setProjects={setProjects} clients={clients} services={services} packages={packages} paymentAlerts={paymentAlerts} />;
+      case 'Marketing': return <Marketing clients={clients} projects={projects} setProjects={setProjects} services={services} employees={employees} quotations={quotations} paymentAlerts={paymentAlerts} />;
       case 'Sales CRM': return <SalesCRM
         leads={leads} setLeads={setLeads}
         setClients={setClients} services={services} campaigns={campaigns}
@@ -272,6 +354,8 @@ const App: React.FC = () => {
         inboundNoResponseLeads={inboundNoResponseLeads} inboundSuppressedLeads={inboundSuppressedLeads}
         autoOpenProspectId={autoOpenProspectId} autoOpenTab={autoOpenTab}
         onClearAutoOpen={() => setAutoOpenProspectId(null)}
+        departments={['Development', 'Graphics Designing', 'Marketing']}
+        quotations={quotations}
       />;
       case 'Client DB': return <ClientDB clients={clients} setClients={setClients} />;
       case 'History': return <History projects={projects} setProjects={setProjects} employees={employees} packages={packages} />;
@@ -352,6 +436,10 @@ const App: React.FC = () => {
       p.type === 'Graphic' &&
       ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status) &&
       p.deadline && p.deadline.split('T')[0] <= todayStr
+    ).length,
+    'Marketing': projects.filter(p =>
+      p.type === 'Marketing' &&
+      ['Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Working'].includes(p.status)
     ).length,
     'Client DB': clients.length,
     Notification: notifications.length + employeeNotifications.filter(n => n.status === 'pending_review').length,

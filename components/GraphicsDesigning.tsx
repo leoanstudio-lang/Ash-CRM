@@ -5,6 +5,7 @@ import { Plus, User, Clock, CheckCircle, Search, Calendar, DollarSign, Filter, C
 import SearchableSelect from './SearchableSelect';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 
 import { addProjectToDB, addPackageToDB, updatePackageInDB, deletePackageFromDB, addPaymentAlertToDB, getCompanyProfile } from '../lib/db';
 import { processAutomaticRevenue } from '../lib/accounting';
@@ -731,6 +732,10 @@ const GraphicsDesigning: React.FC<GraphicsDesigningProps> = ({ employees, projec
         }
       }
     }
+
+    // Stamp watermark on all pages before saving
+    const watermarkB64 = await loadWatermarkBase64();
+    stampWatermarkAllPages(doc, watermarkB64);
 
     // Save
     doc.save(filename);

@@ -85,7 +85,8 @@ export const deleteProjectFromDB = async (id: string) => {
 
 export const addClientToDB = async (client: Omit<Client, 'id'>) => {
     try {
-        await addDoc(collection(db, "clients"), client);
+        const docRef = await addDoc(collection(db, "clients"), client);
+        return { id: docRef.id, ...client };
     } catch (e) {
         console.error("Error adding client: ", e);
     }
@@ -664,5 +665,141 @@ export const deleteQuotationDemoFromDB = async (id: string) => {
         await deleteDoc(doc(db, "quotationDemos", id));
     } catch (e) {
         console.error("Error deleting quotation demo: ", e);
+    }
+};
+
+// --- Quotation Approval Auto-Routing from Sales ---
+export const approveSalesQuotation = async (quotationId: string, salesDealId: string, salesType: 'Inbound' | 'Outbound') => {
+    try {
+        // 1. Find and get the deal from the various possible collections
+        const collections = salesType === 'Inbound' 
+            ? ['inboundActiveDeals', 'inboundNurturing', 'inboundSilent']
+            : ['activeDeals', 'nurturing', 'silent'];
+
+        let dealData: any = null;
+        let foundRef: any = null;
+        let originalCollectionName: string = '';
+
+        for (const colName of collections) {
+            const docRef = doc(db, colName, salesDealId);
+            const snap = await getDoc(docRef);
+            if (snap.exists()) {
+                dealData = snap.data();
+                foundRef = docRef;
+                originalCollectionName = colName;
+                break;
+            }
+        }
+
+        if (!dealData) {
+            console.warn('Sales deal does not exist, updating quotation only.');
+            await updateDoc(doc(db, "quotations", quotationId), { status: 'Approved' });
+            return;
+        }
+
+        // 2. Add client to client DB
+        const clientData = {
+            name: dealData.contactName || dealData.name || 'Unknown',
+            companyName: dealData.companyName || dealData.projectName || '',
+            mobile: dealData.mobile || (dealData.contactMethods?.find((m: any) => m.type === 'phone' || m.type === 'whatsapp')?.value) || '',
+            email: dealData.email || (dealData.contactMethods?.find((m: any) => m.type === 'email')?.value) || '',
+            source: salesType,
+            status: 'Active',
+            createdAt: new Date().toISOString(),
+        };
+        const clientRef = await addDoc(collection(db, "clients"), clientData);
+        const clientId = clientRef.id;
+
+        // 3. Auto-route to department if campaign exists
+        let projectId = '';
+        if (dealData.campaignId) {
+            const campaignCol = salesType === 'Inbound' ? 'inboundSources' : 'campaigns';
+            const campSnapshot = await getDoc(doc(db, campaignCol, dealData.campaignId));
+            if (campSnapshot.exists()) {
+                const campaign = campSnapshot.data();
+                const targetDept = campaign.department;
+                if (targetDept) {
+                    const today = new Date();
+                    const defaultDeadline = new Date(today);
+                    defaultDeadline.setMonth(defaultDeadline.getMonth() + 1);
+                    
+                    const projRef = await addDoc(collection(db, "projects"), {
+                        clientId: clientId,
+                        clientName: clientData.name,
+                        serviceId: 'SALES_ROUTED',
+                        serviceName: targetDept,
+                        type: targetDept === 'Development' ? 'Web'
+                            : targetDept === 'Graphics Designing' ? 'Graphic'
+                            : 'Marketing',
+                        priority: 'Medium',
+                        startDate: today.toISOString().split('T')[0],
+                        deadline: defaultDeadline.toISOString().split('T')[0],
+                        totalAmount: dealData.value || 0,
+                        advance: 0,
+                        description: `Auto-routed from ${salesType} campaign: ${campaign.name || ''}. ${dealData.notes || ''}`.trim(),
+                        status: 'Pending',
+                        progress: 0,
+                        createdAt: new Date().toISOString()
+                    });
+                    projectId = projRef.id;
+                }
+            }
+        }
+
+        // 4. Delete deal from Sales CRM
+        await deleteDoc(foundRef);
+
+        // 5. Update quotation status to Approved and store backup/routing metadata for potential undo
+        await updateDoc(doc(db, "quotations", quotationId), {
+            status: 'Approved',
+            salesDealBackup: dealData,
+            originalCollection: originalCollectionName,
+            createdClientId: clientId,
+            createdProjectId: projectId || null
+        });
+    } catch (e) {
+        console.error("Error approving sales quotation: ", e);
+        throw e;
+    }
+};
+
+export const revertSalesQuotation = async (quotationId: string, newStatus: string) => {
+    try {
+        const qtnRef = doc(db, "quotations", quotationId);
+        const qtnSnapshot = await getDoc(qtnRef);
+        if (!qtnSnapshot.exists()) return;
+
+        const qtnData = qtnSnapshot.data();
+
+        // 1. Re-create the sales deal back in its original collection
+        if (qtnData.salesDealId && qtnData.salesDealBackup && qtnData.originalCollection) {
+            const dealRef = doc(db, qtnData.originalCollection, qtnData.salesDealId);
+            await setDoc(dealRef, qtnData.salesDealBackup);
+            console.log(`Re-created sales deal in ${qtnData.originalCollection}`);
+        }
+
+        // 2. Delete auto-created Client
+        if (qtnData.createdClientId) {
+            await deleteDoc(doc(db, "clients", qtnData.createdClientId));
+            console.log(`Deleted auto-created client: ${qtnData.createdClientId}`);
+        }
+
+        // 3. Delete auto-created Project
+        if (qtnData.createdProjectId) {
+            await deleteDoc(doc(db, "projects", qtnData.createdProjectId));
+            console.log(`Deleted auto-created project: ${qtnData.createdProjectId}`);
+        }
+
+        // 4. Reset quotation status and clear backup/routing metadata
+        await updateDoc(qtnRef, {
+            status: newStatus,
+            salesDealBackup: null,
+            originalCollection: null,
+            createdClientId: null,
+            createdProjectId: null
+        });
+    } catch (e) {
+        console.error("Error reverting sales quotation: ", e);
+        throw e;
     }
 };

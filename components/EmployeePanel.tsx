@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
-import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo } from '../types';
-import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo, MarketingServiceAllocation, MarketingReportEntry, ProjectNote } from '../types';
+import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare, ArrowLeft, Layers, FileText, Download, Save, Trash2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered } from 'lucide-react';
 import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB, updateManualTaskInDB, updateQuotationDemoInDB } from '../lib/db';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import NewManualTaskModal from './NewManualTaskModal';
+import jsPDF from 'jspdf';
+import GoogleDocsWorkspace from './GoogleDocsWorkspace';
+import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 
 type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working' | 'demos';
 
@@ -19,6 +22,10 @@ interface EmployeePanelProps {
 }
 
 const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clients, manualTasks = [], quotationDemos = [], onLogout }) => {
+  if (employee.department === 'Marketing') {
+    return <MarketingEmployeePanel employee={employee} projects={projects} clients={clients} onLogout={onLogout} />;
+  }
+
   const [currentView, setCurrentView] = useState<EmployeeView>('dashboard');
   const [showNewTaskModal, setShowNewTaskModal] = useState(false);
   const [newTaskSuccess, setNewTaskSuccess] = useState(false);
@@ -1023,5 +1030,689 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
   );
 };
 
-export default EmployeePanel;
+interface MarketingEmployeePanelProps {
+  employee: Employee;
+  projects: Project[];
+  clients: Client[];
+  onLogout: () => void;
+}
 
+interface RichTextEditorProps {
+  initialValue: string;
+  onInput: (html: string) => void;
+  onPaste: (e: React.ClipboardEvent<HTMLDivElement>) => void;
+  className: string;
+  editorRef: React.RefObject<HTMLDivElement>;
+  serviceId: string;
+}
+
+const RichTextEditor = React.memo(({ initialValue, onInput, onPaste, className, editorRef, serviceId }: RichTextEditorProps) => {
+  React.useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== initialValue) {
+      editorRef.current.innerHTML = initialValue;
+    }
+  }, [initialValue]);
+
+  return (
+    <div
+      ref={editorRef}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={(e) => onInput(e.currentTarget.innerHTML)}
+      onPaste={onPaste}
+      className={className}
+      style={{ wordBreak: 'break-word' }}
+    />
+  );
+}, (prevProps, nextProps) => {
+  return prevProps.serviceId === nextProps.serviceId;
+});
+
+const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({ employee, projects, clients, onLogout }) => {
+  const [activeProjId, setActiveProjId] = useState<string | null>(null);
+  const [workspaceTab, setWorkspaceTab] = useState<'services' | 'reports' | 'notes'>('services');
+  const [reportTexts, setReportTexts] = useState<Record<string, string>>({});
+  const [selectedReportServiceId, setSelectedReportServiceId] = useState<string>('');
+  const [saveStatus, setSaveStatus] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+  const [newNoteText, setNewNoteText] = useState('');
+  const [notesText, setNotesText] = useState<string>('');
+
+  const editorRef = useRef<HTMLDivElement>(null);
+  const notesEditorRef = useRef<HTMLDivElement>(null);
+
+  const myMarketingProjects = projects.filter(proj => {
+    if (proj.type !== 'Marketing') return false;
+    const allocs = proj.servicesAllocated || [];
+    return allocs.some(alloc => alloc.assignedEmployeeId === employee.id);
+  });
+
+  const activeProj = projects.find(p => p.id === activeProjId);
+
+  React.useEffect(() => {
+    if (activeProj) {
+      const initialTexts: Record<string, string> = {};
+      const myServices = (activeProj.servicesAllocated || []).filter(alloc => alloc.assignedEmployeeId === employee.id);
+      myServices.forEach(alloc => {
+        initialTexts[alloc.serviceId] = alloc.report || '';
+      });
+      setReportTexts(initialTexts);
+      setSaveStatus({});
+      if (myServices.length > 0) {
+        setSelectedReportServiceId(prev => {
+          if (prev && myServices.some(s => s.serviceId === prev)) return prev;
+          return myServices[0].serviceId;
+        });
+      }
+    }
+  }, [activeProjId, projects]);
+
+  React.useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.innerHTML = reportTexts[selectedReportServiceId] || '';
+    }
+  }, [selectedReportServiceId, workspaceTab]);
+
+  const executeCommand = (command: string, value: string = '') => {
+    document.execCommand(command, false, value);
+    if (editorRef.current) {
+      setReportTexts(prev => ({
+        ...prev,
+        [selectedReportServiceId]: editorRef.current!.innerHTML
+      }));
+    }
+  };
+
+  const handleUpdateServiceStatus = async (serviceId: string, status: any) => {
+    if (!activeProj) return;
+    const updatedAllocations = (activeProj.servicesAllocated || []).map(s => {
+      if (s.serviceId === serviceId) {
+        return { ...s, status };
+      }
+      return s;
+    });
+    await updateProjectInDB(activeProj.id, { servicesAllocated: updatedAllocations });
+  };
+
+  const handleSubmitReport = async (serviceId: string) => {
+    if (!activeProj) return;
+    const reportText = editorRef.current ? editorRef.current.innerHTML : (reportTexts[serviceId] || '');
+
+    setSaveStatus(prev => ({ ...prev, [serviceId]: 'saving' }));
+
+    const updatedAllocations = (activeProj.servicesAllocated || []).map(s => {
+      if (s.serviceId === serviceId) {
+        return {
+          ...s,
+          report: reportText
+        };
+      }
+      return s;
+    });
+
+    try {
+      await updateProjectInDB(activeProj.id, { servicesAllocated: updatedAllocations });
+      setSaveStatus(prev => ({ ...prev, [serviceId]: 'saved' }));
+      setTimeout(() => {
+        setSaveStatus(prev => ({ ...prev, [serviceId]: 'idle' }));
+      }, 3000);
+    } catch (err) {
+      console.error("Failed to save report:", err);
+      alert("Error saving report to database.");
+      setSaveStatus(prev => ({ ...prev, [serviceId]: 'idle' }));
+    }
+  };
+
+  React.useEffect(() => {
+    if (workspaceTab === 'notes' && notesEditorRef.current && activeProj) {
+      notesEditorRef.current.innerHTML = activeProj.marketingNotes || '';
+      setNotesText(activeProj.marketingNotes || '');
+    }
+  }, [workspaceTab, activeProjId]);
+
+  const executeNotesCommand = (command: string, value: string = '') => {
+    document.execCommand(command, false, value);
+    if (notesEditorRef.current) {
+      setNotesText(notesEditorRef.current.innerHTML);
+    }
+  };
+
+  const handleSaveNotesLedger = async () => {
+    if (!activeProj) return;
+    const finalHtml = notesEditorRef.current ? notesEditorRef.current.innerHTML : notesText;
+    await updateProjectInDB(activeProj.id, { marketingNotes: finalHtml });
+    alert("Notes Ledger successfully saved!");
+  };
+
+  const handleEditorPaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    
+    selection.deleteFromDocument();
+    
+    const range = selection.getRangeAt(0);
+    const fragment = document.createDocumentFragment();
+    const lines = text.split('\n');
+    
+    lines.forEach((line, idx) => {
+      fragment.appendChild(document.createTextNode(line));
+      if (idx < lines.length - 1) {
+        fragment.appendChild(document.createElement('br'));
+      }
+    });
+    
+    range.insertNode(fragment);
+    
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    const target = e.currentTarget as HTMLDivElement;
+    if (target === editorRef.current) {
+      setReportTexts(prev => ({
+        ...prev,
+        [selectedReportServiceId]: target.innerHTML
+      }));
+    } else if (target === notesEditorRef.current) {
+      setNotesText(target.innerHTML);
+    }
+  };
+
+  const downloadReportPDF = async (reportContent: string, serviceName: string, clientName: string) => {
+    const doc = new jsPDF();
+    const deepEclipse: [number, number, number] = [15, 23, 42];
+    const textMuted: [number, number, number] = [100, 116, 139];
+    const lightGray: [number, number, number] = [226, 232, 240];
+    const pageWidth = doc.internal.pageSize.width;
+    
+    doc.setFillColor(...deepEclipse);
+    doc.rect(0, 0, 210, 38, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('MARKETING CAMPAIGN REPORT', 15, 16);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(200, 200, 220);
+    doc.text(`SERVICE: ${serviceName.toUpperCase()} | TARGET CLIENT: ${clientName.toUpperCase()}`, 15, 23);
+    
+    const logoImg = new Image();
+    logoImg.src = '/LOGO-WHITE.png';
+    
+    const completePdfDrawing = async () => {
+      let currentY = 48;
+      doc.setDrawColor(...lightGray);
+      doc.line(15, currentY, 195, currentY);
+      currentY += 8;
+
+      const container = document.createElement('div');
+      container.innerHTML = reportContent;
+      container.style.width = '688px'; // 182mm width at 96dpi
+      container.style.padding = '0px';
+      container.style.position = 'absolute';
+      container.style.top = '0px';
+      container.style.left = '0px';
+      container.style.zIndex = '-9999';
+      container.style.opacity = '1';
+      container.style.backgroundColor = 'white';
+      container.style.color = '#0f172a';
+
+      const style = document.createElement('style');
+      style.innerHTML = `
+        * { box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        *:first-child { margin-top: 0 !important; margin-block-start: 0 !important; padding-top: 0 !important; }
+        h1, h2, h3, p, li, img, blockquote { page-break-inside: avoid !important; break-inside: avoid !important; }
+        h1 { font-size: 18px; font-weight: bold; color: #0f172a; margin-top: 12px; margin-bottom: 6px; }
+        h2 { font-size: 15px; font-weight: bold; color: #0f172a; margin-top: 10px; margin-bottom: 5px; }
+        h3 { font-size: 13px; font-weight: bold; color: #0f172a; margin-top: 8px; margin-bottom: 4px; }
+        p { line-height: 1.6; color: #334155; font-size: 12px; margin-bottom: 8px; }
+        ul { margin-top: 4px; padding-left: 18px; color: #334155; font-size: 12px; line-height: 1.6; list-style-type: disc; margin-bottom: 8px; }
+        ol { margin-top: 4px; padding-left: 18px; color: #334155; font-size: 12px; line-height: 1.6; list-style-type: decimal; margin-bottom: 8px; }
+        li { margin-bottom: 3px; }
+        b, strong { font-weight: bold; }
+        i, em { font-style: italic; }
+        u { text-decoration: underline; }
+      `;
+      container.appendChild(style);
+      document.body.appendChild(container);
+
+      try {
+        const topMargin = 20;
+        await doc.html(container, {
+          x: 15,
+          y: currentY - topMargin,
+          width: 180,
+          windowWidth: 688,
+          margin: [topMargin, 0, 30, 0],
+          autoPaging: 'slice',
+          html2canvas: {
+            useCORS: true,
+            logging: false
+          }
+        });
+      } catch (err) {
+        console.error("HTML PDF Render failed:", err);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        const splitText = doc.splitTextToSize(container.innerText || '', pageWidth - 30);
+        doc.text(splitText, 15, currentY);
+      } finally {
+        document.body.removeChild(container);
+      }
+
+      // Paginated Footer
+      // Stamp watermark on all pages before drawing footer overlays
+      const watermarkB64 = await loadWatermarkBase64();
+      stampWatermarkAllPages(doc, watermarkB64);
+
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        const pageHeight = doc.internal.pageSize.height;
+        doc.setDrawColor(...lightGray);
+        doc.setLineWidth(0.5);
+        doc.line(15, pageHeight - 18, pageWidth - 15, pageHeight - 18);
+        
+        doc.setFontSize(7);
+        doc.setTextColor(...textMuted);
+        doc.setFont("helvetica", "bold");
+        doc.text("ASH CRM - MARKETING REPORT DESK", 15, pageHeight - 12);
+        doc.text(`PAGE ${i} OF ${pageCount}`, pageWidth - 15, pageHeight - 12, { align: 'right' });
+      }
+
+      doc.save(`MktReport_${clientName.replace(/\s+/g, '_')}_${serviceName.replace(/\s+/g, '_')}.pdf`);
+    };
+
+    logoImg.onload = () => {
+      doc.addImage(logoImg, 'PNG', 170, 6, 25, 25);
+      completePdfDrawing();
+    };
+    logoImg.onerror = () => {
+      completePdfDrawing();
+    };
+  };
+
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-xs">
+      {/* Sidebar Navigation */}
+      <aside className="w-56 bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
+        <div className="p-5 flex flex-col items-start gap-3">
+          <div className="w-8 h-8 bg-slate-800 rounded flex items-center justify-center border border-slate-700">
+            <span className="text-white font-extrabold text-sm">M</span>
+          </div>
+          <div>
+            <h4 className="font-bold text-xs text-white tracking-tight leading-none">{employee.name}</h4>
+            <span className="text-[8px] text-slate-400 font-bold uppercase tracking-wider block mt-1">Marketing Specialist</span>
+          </div>
+        </div>
+
+        <div className="h-px bg-slate-800 mx-5 mb-4"></div>
+
+        <nav className="flex-1 px-3 space-y-1">
+          <button
+            onClick={() => setActiveProjId(null)}
+            className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${!activeProjId ? 'bg-slate-850 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-850 hover:text-white'}`}
+          >
+            <LayoutDashboard size={13} /> My Campaigns
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-slate-800">
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-950/30 rounded-lg text-xs font-bold transition"
+          >
+            <LogOut size={13} /> Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Workspace Body */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {activeProj ? (
+          <div className="flex-1 flex flex-col overflow-hidden p-5 animate-in fade-in duration-200 bg-slate-100/40">
+            <div className="flex items-center gap-4 mb-4">
+              <button
+                onClick={() => setActiveProjId(null)}
+                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition shadow-sm"
+              >
+                <ArrowLeft size={12} /> Dashboard
+              </button>
+              <div className="h-4 w-px bg-slate-350"></div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-800 leading-none">{activeProj.clientName}</h3>
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block mt-1">Marketing workspace</span>
+              </div>
+            </div>
+
+            <div className="flex gap-1 p-0.5 bg-slate-200/50 rounded-lg w-max border border-slate-200 shadow-sm mb-4">
+              <button
+                onClick={() => setWorkspaceTab('services')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${workspaceTab === 'services' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                Services & Status
+              </button>
+              <button
+                onClick={() => setWorkspaceTab('notes')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${workspaceTab === 'notes' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                Notes Ledger
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-0 bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
+              {workspaceTab === 'services' && (() => {
+                const myServices = (activeProj.servicesAllocated || []).filter(alloc => alloc.assignedEmployeeId === employee.id);
+                
+                return (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h4 className="text-sm font-black text-slate-800 leading-tight">My Active Services</h4>
+                        <p className="text-[10px] text-slate-400 font-medium">Review assigned services and update active delivery status.</p>
+                      </div>
+                      {myServices.length > 0 && (
+                        <button
+                          onClick={() => {
+                            setSelectedReportServiceId(myServices[0].serviceId);
+                            setWorkspaceTab('reports');
+                          }}
+                          className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-md transition inline-flex items-center gap-1.5 uppercase tracking-wider text-[10px] font-sans"
+                        >
+                          <FileText size={12} /> Open Workspace Report / Logs
+                        </button>
+                      )}
+                    </div>
+
+                    {myServices.length === 0 ? (
+                      <div className="py-12 border border-dashed border-slate-250 rounded-lg text-center text-xs font-bold uppercase text-slate-400">
+                        No active services assigned to your name in this campaign.
+                      </div>
+                    ) : (
+                      <div className="border border-slate-250 rounded-lg overflow-hidden bg-white shadow-sm">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-450 font-black uppercase text-[8px] tracking-wider">
+                              <th className="px-4 py-2.5">Service Name</th>
+                              <th className="px-4 py-2.5">Status</th>
+                              <th className="px-4 py-2.5">Action Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
+                            {myServices.map(service => (
+                              <tr key={service.serviceId} className="hover:bg-slate-50/40 transition-colors">
+                                <td className="px-4 py-3 font-extrabold text-slate-800 text-xs">{service.serviceName}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-0.5 border rounded text-[8px] font-black uppercase tracking-wider inline-block ${service.status === 'Finished' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : (service.status === 'Working' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-slate-50 text-slate-500 border-slate-150')}`}>
+                                    {service.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <select
+                                    value={service.status}
+                                    onChange={(e) => handleUpdateServiceStatus(service.serviceId, e.target.value)}
+                                    className="p-1 bg-slate-50 border border-slate-200 rounded text-xs font-bold text-slate-755 outline-none cursor-pointer w-32"
+                                  >
+                                    <option value="Pending">Pending</option>
+                                    <option value="Working">Working</option>
+                                    <option value="Waiting">Waiting</option>
+                                    <option value="Finished">Finished</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {workspaceTab === 'reports' && (() => {
+                const myServices = (activeProj.servicesAllocated || []).filter(alloc => alloc.assignedEmployeeId === employee.id);
+                
+                return (
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-150">
+                      <div>
+                        <h4 className="text-sm font-black text-slate-800 leading-tight">Service Reporting Hub</h4>
+                        <p className="text-xs text-slate-400 font-medium">Select a campaign channel to submit your formatted daily log report.</p>
+                      </div>
+                      <button
+                        onClick={() => setWorkspaceTab('services')}
+                        className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[10px] font-bold transition flex items-center gap-1 shadow-sm border border-slate-200"
+                      >
+                        <ArrowLeft size={11} /> Back to Services
+                      </button>
+                    </div>
+
+                    {myServices.length === 0 ? (
+                      <div className="py-12 border border-dashed border-slate-200 rounded-lg text-center text-xs font-bold uppercase text-slate-400">
+                        No active services assigned to your name in this campaign.
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {(() => {
+                          const serviceAlloc = myServices.find(s => s.serviceId === selectedReportServiceId) || myServices[0];
+
+                          if (!serviceAlloc) {
+                            return (
+                              <div className="py-12 border border-dashed border-slate-200 rounded-lg text-center text-xs font-bold uppercase tracking-widest text-slate-400">
+                                No active services assigned to your name.
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <GoogleDocsWorkspace
+                              project={activeProj}
+                              serviceAlloc={serviceAlloc}
+                              client={clients.find(c => c.id === activeProj.clientId)}
+                              employee={employee}
+                            />
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {workspaceTab === 'notes' && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-150 shrink-0">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-800 leading-tight">Shared Notes Ledger</h4>
+                      <p className="text-xs text-slate-400 font-medium">Google Docs style note editor. Changes sync in real-time with admins.</p>
+                    </div>
+                    <button
+                      onClick={handleSaveNotesLedger}
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition shadow-sm active:scale-[0.98]"
+                    >
+                      Save Notes Ledger
+                    </button>
+                  </div>
+
+                  {/* WYSIWYG Editor Container */}
+                  <div className="flex flex-col border border-slate-200 rounded-lg shadow-sm bg-white h-[450px] relative">
+                    {/* Toolbar */}
+                    <div className="flex items-center gap-1 p-2 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('bold')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Bold"
+                      >
+                        <Bold size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('italic')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Italic"
+                      >
+                        <Italic size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('underline')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Underline"
+                      >
+                        <Underline size={13} />
+                      </button>
+                      
+                      <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('justifyLeft')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Align Left"
+                      >
+                        <AlignLeft size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('justifyCenter')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Align Center"
+                      >
+                        <AlignCenter size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('justifyRight')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Align Right"
+                      >
+                        <AlignRight size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('justifyFull')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Justify"
+                      >
+                        <AlignJustify size={13} />
+                      </button>
+
+                      <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('insertUnorderedList')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Bullet List"
+                      >
+                        <List size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('insertOrderedList')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                        title="Numbered List"
+                      >
+                        <ListOrdered size={13} />
+                      </button>
+                      
+                      <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+                      <button
+                        type="button"
+                        onClick={() => executeNotesCommand('removeFormat')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-500 rounded transition-colors text-[10px] font-bold"
+                        title="Clear Formatting"
+                      >
+                        Clear
+                      </button>
+                    </div>
+
+                    {/* contentEditable editor */}
+                    <RichTextEditor
+                      initialValue={activeProj.marketingNotes || ''}
+                      onInput={(html) => setNotesText(html)}
+                      onPaste={handleEditorPaste}
+                      className="flex-1 p-4 text-xs font-medium text-slate-750 outline-none overflow-y-auto"
+                      editorRef={notesEditorRef}
+                      serviceId="notes"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 tracking-tight">Assigned Marketing Campaigns</h2>
+              <p className="text-xs text-slate-400 font-medium">Access campaigns to submit report entries.</p>
+            </div>
+
+            {myMarketingProjects.length === 0 ? (
+              <div className="bg-white border border-dashed border-slate-200 rounded-lg py-24 text-center">
+                <Layers className="text-slate-350 mx-auto mb-3" size={32} />
+                <p className="text-slate-400 text-sm font-bold uppercase">No Campaigns Allocated</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {myMarketingProjects.map(proj => {
+                  const myAllocatedServices = (proj.servicesAllocated || [])
+                    .filter(s => s.assignedEmployeeId === employee.id)
+                    .map(s => s.serviceName);
+
+                  return (
+                    <div key={proj.id} className="bg-white rounded-lg border border-slate-200 shadow-sm hover:border-slate-350 transition-all p-5 flex flex-col justify-between gap-5 relative group overflow-hidden">
+                      <div className="space-y-3">
+                        <div>
+                          <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block mb-0.5">Target Account</span>
+                          <h4 className="text-base font-extrabold text-slate-900 leading-tight truncate">{proj.clientName}</h4>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block">My Services</span>
+                          <div className="flex flex-wrap gap-1">
+                            {myAllocatedServices.map(name => (
+                              <span key={name} className="px-1.5 py-0.5 bg-slate-50 border border-slate-200 text-slate-750 text-[9px] rounded font-bold">
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 pt-1 border-t border-slate-100">
+                          <div>
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Campaign Start</span>
+                            <span className="text-xs font-bold text-slate-700">{proj.startDate}</span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Next Renewal</span>
+                            <span className="text-xs font-bold text-slate-700">{proj.deadline}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => { setActiveProjId(proj.id); setWorkspaceTab('services'); }}
+                        className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                      >
+                        Open Workspace
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default EmployeePanel;

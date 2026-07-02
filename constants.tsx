@@ -17,7 +17,8 @@ import {
   Target,
   FileText,
   Video,
-  Landmark
+  Landmark,
+  Megaphone
 } from 'lucide-react';
 import { Section } from './types';
 
@@ -28,6 +29,7 @@ export const SIDEBAR_ITEMS = [
   { id: 'Quotations', label: 'Quotations', icon: <FileText size={20} /> },
   { id: 'Development', label: 'Development', icon: <Code2 size={20} /> },
   { id: 'Graphics Designing', label: 'Graphics Designing', icon: <Palette size={20} /> },
+  { id: 'Marketing', label: 'Marketing', icon: <Megaphone size={20} /> },
   { id: 'Sales CRM', label: 'Sales CRM', icon: <Users size={20} /> },
   { id: 'Notification', label: 'Notification', icon: <Bell size={20} /> },
   { id: 'Client DB', label: 'Client DB', icon: <Database size={20} /> },

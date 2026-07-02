@@ -4,6 +4,7 @@ import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, Use
 import { addQuotationToDB, updateQuotationInDB, addClientToDB, getCompanyProfile, subscribeToCollection, deleteQuotationFromDB, addQuotationDemoToDB, updateQuotationDemoInDB, deleteQuotationDemoFromDB } from '../lib/db';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 
 interface QuotationsProps {
     clients: Client[];
@@ -70,7 +71,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
     const [items, setItems] = useState<QuotationItem[]>([{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
     const [discount, setDiscount] = useState<number>(0);
     const [terms, setTerms] = useState("1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.");
-    
+
     // Custom HTML Setup
     const [isCustomHtml, setIsCustomHtml] = useState<boolean>(false);
     const [customHtmlContent, setCustomHtmlContent] = useState<string>('');
@@ -155,7 +156,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         // Populate all form states with quotation data
         setIssueDate(q.issueDate);
         setValidityDate(q.validityDate);
-        
+
         // Find if it's an existing client or new
         if (q.clientId) {
             setClientType('existing');
@@ -171,7 +172,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             setNewClientEmail(q.clientEmail || '');
             setNewClientPhone(q.clientPhone || '');
         }
-        
+
         setClientAddress(q.clientAddress || '');
         setItems(q.items && q.items.length > 0 ? [...q.items] : [{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
         setDiscount(q.discount || 0);
@@ -281,6 +282,15 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         if (clientType === 'existing' && selectedClientId) qtnData.clientId = selectedClientId;
         if (clientAddress) qtnData.clientAddress = clientAddress;
 
+        if (isEditing && editingQuotationId) {
+            const existing = quotations.find(q => q.id === editingQuotationId);
+            if (existing) {
+                if (existing.salesDealId) (qtnData as any).salesDealId = existing.salesDealId;
+                if (existing.salesType) (qtnData as any).salesType = existing.salesType;
+                if (existing.sourceCampaignName) (qtnData as any).sourceCampaignName = existing.sourceCampaignName;
+            }
+        }
+
         try {
             if (isEditing && editingQuotationId) {
                 await updateQuotationInDB(editingQuotationId, qtnData);
@@ -296,6 +306,28 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
 
     const handleStatusChange = async (qtn: Quotation, newStatus: Quotation['status']) => {
         try {
+            if (newStatus === 'Approved' && qtn.salesDealId && qtn.salesType) {
+                if (window.confirm("Approve this sales quotation? This will create a Client, auto-route the Project, and close the Sales Deal.")) {
+                    const { approveSalesQuotation } = await import('../lib/db');
+                    await approveSalesQuotation(qtn.id, qtn.salesDealId, qtn.salesType);
+                    alert("Quotation approved! Client created and Project routed successfully.");
+                    return;
+                } else {
+                    return;
+                }
+            }
+
+            if (qtn.status === 'Approved' && newStatus !== 'Approved' && qtn.salesDealBackup) {
+                if (window.confirm("This quotation was previously approved. Changing its status will undo the approval: restoring the sales deal to Sales CRM and deleting the associated Client and Project documents. Proceed?")) {
+                    const { revertSalesQuotation } = await import('../lib/db');
+                    await revertSalesQuotation(qtn.id, newStatus);
+                    alert("Quotation reverted! Sales deal restored and client/project deleted.");
+                    return;
+                } else {
+                    return;
+                }
+            }
+
             await updateQuotationInDB(qtn.id, { status: newStatus });
 
             // Automation hook: If Approved AND was a new client, add to main Client DB
@@ -446,54 +478,12 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         doc.setTextColor(...white);
         doc.setFont("helvetica", "bold");
 
-        let addedLogo = false;
-        if (co?.logoUrl) {
-            try {
-                const loadImageAsBase64 = async (url: string): Promise<string> => {
-                    try {
-                        const response = await fetch(url, { mode: 'cors' });
-                        if (!response.ok) throw new Error("Network response was not ok");
-                        const blob = await response.blob();
-                        return new Promise((resolve, reject) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => {
-                                if (typeof reader.result === 'string') resolve(reader.result);
-                                else reject("Failed to convert blob to base64");
-                            };
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                        });
-                    } catch (err) {
-                        return new Promise((resolve, reject) => {
-                            const img = new Image();
-                            img.crossOrigin = 'Anonymous';
-                            img.onload = () => {
-                                const canvas = document.createElement('canvas');
-                                canvas.width = img.width; canvas.height = img.height;
-                                const ctx = canvas.getContext('2d');
-                                if (ctx) { ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL('image/png')); }
-                                else reject('No canvas context');
-                            };
-                            img.onerror = reject;
-                            img.src = url;
-                        });
-                    }
-                };
-                const base64Logo = await loadImageAsBase64(co.logoUrl);
-                doc.addImage(base64Logo, 'PNG', 14, 8, 30, 10, '', 'FAST');
-                addedLogo = true;
-            } catch (err) {
-                console.warn("Could not load logo:", err);
-            }
-        }
-
-        if (!addedLogo) {
-            doc.setFontSize(16);
-            doc.text(co?.companyName || 'Your Company', 14, 18);
-        }
-
-        // Tagline — White, italic, below company name
-        let bandTextY = addedLogo ? 24 : 24;
+        // Draw Company Name Text directly instead of logo
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(16);
+        doc.setTextColor(...white);
+        doc.text(co?.companyName || 'Ash Creative Studio', 14, 18);
+        let bandTextY = 23;
         if (co?.tagline && co.tagline.trim() !== "") {
             doc.setFontSize(8);
             doc.setFont("helvetica", "italic");
@@ -573,19 +563,19 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
 
         // 1. Address
         if (q.clientAddress && q.clientAddress.trim() !== "") {
-            const cleanAddr = q.clientAddress.replace(/^[,\s*]+|[,\s*]+$/g, '').trim(); 
+            const cleanAddr = q.clientAddress.replace(/^[,\s*]+|[,\s*]+$/g, '').trim();
             if (cleanAddr) {
                 const splitAddress = doc.splitTextToSize(cleanAddr, 80);
                 doc.text(splitAddress, 14, maxHeaderY);
                 maxHeaderY += (splitAddress.length * 4.5);
             }
         }
-        
+
         // 2. Phone / Mobile
         if (q.clientPhone && q.clientPhone.trim() !== "") {
-            let cp = q.clientPhone.replace(/[\*\,]/g, ''); 
-            let digits = cp.replace(/[^\d+]/g, ''); 
-            
+            let cp = q.clientPhone.replace(/[\*\,]/g, '');
+            let digits = cp.replace(/[^\d+]/g, '');
+
             if (digits.length >= 10 && digits.length <= 15) {
                 if (digits.startsWith('+91') && digits.length === 13) {
                     cp = digits.replace(/(\+91)(\d{5})(\d{5})/, '$1 $2 $3');
@@ -597,7 +587,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             } else {
                 cp = cp.replace(/\s+/g, ' ').trim();
             }
-            
+
             if (cp) {
                 doc.text(cp, 14, maxHeaderY);
                 maxHeaderY += 4.5;
@@ -629,7 +619,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
 
             const style = document.createElement('style');
             style.innerHTML = `
-                * { box-sizing: border-box; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+                * { box-sizing: border-box; font-family: 'Inter', sans-serif; }
                 /* Zero out top margin on the very first element so there's no gap after client section */
                 *:first-child { margin-top: 0 !important; margin-block-start: 0 !important; padding-top: 0 !important; }
                 h1, h2, h3, h4, h5, h6 { color: #0A0028; margin-top: 0; }
@@ -654,7 +644,11 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                     width: 182,
                     windowWidth: 688,
                     margin: [topMargin, 0, 38, 0], // top=25mm, right=0, bottom=38mm (for footer), left=0
-                    autoPaging: 'text' // 'text' instead of 'slice' prevents chopping words/letters in half
+                    autoPaging: 'slice', // 'slice' instead of 'text' prevents text shifting and line height mismatch glitches
+                    html2canvas: {
+                        useCORS: true,
+                        logging: false
+                    }
                 });
             } catch (err) {
                 console.error("Custom HTML render failed", err);
@@ -719,15 +713,15 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             // ==========================================
             let finalY = (doc as any).lastAutoTable.finalY + 10;
             const pageHeight = doc.internal.pageSize.height;
-            
+
             // Check if totals + terms fit on current page before footer (which is at pageHeight - 35)
             if (finalY > pageHeight - 75) {
                 doc.addPage();
                 finalY = 20;
             }
 
-            const rightEdge = 196; 
-            const totalsBoxX = 135; 
+            const rightEdge = 196;
+            const totalsBoxX = 135;
             let totalsY = finalY;
 
             doc.setFontSize(9);
@@ -744,7 +738,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                 doc.setTextColor(...textMuted);
                 doc.text("Discount", totalsBoxX, totalsY);
                 doc.setFont("helvetica", "bold");
-                doc.setTextColor(225, 29, 72); 
+                doc.setTextColor(225, 29, 72);
                 doc.text(`-Rs. ${q.discount.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
             }
 
@@ -786,11 +780,15 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         // ==========================================
         // 7. DYNAMIC PAGINATED FOOTER + PAGE FRAME
         // ==========================================
+        // Stamp watermark on all pages before drawing footer overlays
+        const watermarkB64 = await loadWatermarkBase64();
+        stampWatermarkAllPages(doc, watermarkB64);
+
         const pageCount = doc.getNumberOfPages();
         const royalPurple2: [number, number, number] = [108, 46, 247];
         const footerBandHeight = 28;
 
-        for(let i = 1; i <= pageCount; i++) {
+        for (let i = 1; i <= pageCount; i++) {
             doc.setPage(i);
             const pageHeight = doc.internal.pageSize.height;
             const footerBandY = pageHeight - footerBandHeight;
@@ -860,7 +858,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                 if (!rawLabel) continue;
 
                 const labelKey = rawLabel.replace(/\s+/g, '_');
-                
+
                 // Use fallback map if it exists (for legacy case-sensitivity), otherwise construct dynamically
                 const iconFile = fallbackIconMap[labelKey] || `${labelKey}.png`;
                 const iconUrl = `/${iconFile}`;
@@ -942,14 +940,14 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
 
         try {
             await addQuotationDemoToDB(newDemo);
-            
+
             // Success: Close and Reset everything
             setIsCreatingDemo(false);
             setDemoDescription('');
             setDemoServiceId('');
             setDemoAssignedEmployee('');
             setDemoAllocationDate(new Date().toISOString().split('T')[0]);
-            
+
             // Shared Client State Reset
             setClientType('existing');
             setSelectedClientId('');
@@ -960,7 +958,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             setClientAddress('');
             setClientSearchTerm('');
             setIsClientDropdownOpen(false);
-            
+
         } catch (err) {
             console.error(err);
             alert("Error saving demo.");
@@ -1188,7 +1186,15 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                         <td className="px-8 py-5">
                                             <div className="flex flex-col">
                                                 <span className="font-black text-slate-800 text-sm">{q.clientName}</span>
-                                                {q.isNewClient && <span className="text-[9px] font-bold uppercase tracking-wider text-blue-500 mt-0.5 border border-blue-200 bg-blue-50 w-fit px-1.5 rounded">New Client</span>}
+                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                    {q.isNewClient && <span className="text-[9px] font-bold uppercase tracking-wider text-blue-500 border border-blue-200 bg-blue-50 w-fit px-1.5 rounded">New Client</span>}
+                                                    {q.salesDealId && (
+                                                        <span className="text-[9px] font-bold uppercase tracking-wider text-purple-600 border border-purple-200 bg-purple-50 w-fit px-1.5 rounded flex items-center gap-1" title={q.sourceCampaignName || ''}>
+                                                            <span>💼 Sales ({q.salesType})</span>
+                                                            {q.sourceCampaignName && <span className="opacity-70 font-normal">| {q.sourceCampaignName}</span>}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </td>
                                         <td className="px-8 py-5">
@@ -1370,18 +1376,18 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                         {clientType === 'existing' ? (
                                             <div className="relative" ref={dropdownRef}>
                                                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Client <span className="text-rose-500">*</span></label>
-                                                
+
                                                 {/* Replaced native select with custom searchable dropdown */}
-                                                <div 
+                                                <div
                                                     className={`w-full p-3 border ${isClientDropdownOpen ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200'} rounded-xl bg-white flex justify-between items-center cursor-pointer transition-all`}
                                                     onClick={() => setIsClientDropdownOpen(!isClientDropdownOpen)}
                                                 >
                                                     <span className={`text-sm font-medium truncate ${selectedClientId ? 'text-slate-800' : 'text-slate-400'}`}>
-                                                        {selectedClientId 
+                                                        {selectedClientId
                                                             ? (() => {
                                                                 const c = clients.find(c => c.id === selectedClientId);
                                                                 return c ? `${c.companyName || c.name} (${c.mobile})` : 'Select Client';
-                                                              })()
+                                                            })()
                                                             : '-- Choose Existing Client --'}
                                                     </span>
                                                     <Navigation size={14} className={`text-slate-400 transition-transform duration-200 ${isClientDropdownOpen ? 'rotate-180' : 'rotate-90'}`} />
@@ -1391,9 +1397,9 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                                     <div className="absolute z-[100] w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-72 flex flex-col overflow-hidden">
                                                         <div className="p-2 border-b border-slate-100 flex items-center bg-slate-50/50">
                                                             <Search size={14} className="text-slate-400 ml-2 shrink-0" />
-                                                            <input 
-                                                                type="text" 
-                                                                placeholder="Search by name, company, or phone..." 
+                                                            <input
+                                                                type="text"
+                                                                placeholder="Search by name, company, or phone..."
                                                                 className="w-full p-2 outline-none text-sm bg-transparent"
                                                                 value={clientSearchTerm}
                                                                 onChange={(e) => setClientSearchTerm(e.target.value)}
@@ -1402,7 +1408,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                                             />
                                                         </div>
                                                         <div className="overflow-y-auto flex-1 p-1 custom-scrollbar">
-                                                            <div 
+                                                            <div
                                                                 className={`p-3 text-sm rounded-lg cursor-pointer transition-colors ${!selectedClientId ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
                                                                 onClick={() => { setSelectedClientId(''); setIsClientDropdownOpen(false); setClientSearchTerm(''); }}
                                                             >
@@ -1412,8 +1418,8 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                                                 const searchStr = (`${c.companyName || ''} ${c.name || ''} ${c.mobile || ''}`).toLowerCase();
                                                                 return searchStr.includes(clientSearchTerm.toLowerCase());
                                                             }).map(c => (
-                                                                <div 
-                                                                    key={c.id} 
+                                                                <div
+                                                                    key={c.id}
                                                                     className={`p-3 text-sm rounded-lg cursor-pointer transition-colors truncate flex items-center justify-between ${selectedClientId === c.id ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 hover:bg-slate-50'}`}
                                                                     onClick={() => { setSelectedClientId(c.id); setIsClientDropdownOpen(false); setClientSearchTerm(''); }}
                                                                 >
@@ -1513,113 +1519,113 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                             {/* Items Table */}
                                             <div>
                                                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                                            <table className="w-full text-left">
-                                                <thead>
-                                                    <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                                                        <th className="px-4 py-3 min-w-[280px]">Item Description</th>
-                                                        <th className="px-3 py-3 w-20 text-center">Qty</th>
-                                                        <th className="px-3 py-3 w-32 text-right">Unit Rate (₹)</th>
-                                                        <th className="px-4 py-3 w-32 text-right">Total (₹)</th>
-                                                        <th className="px-2 py-3 w-12 text-center">Act</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-slate-100">
-                                                    {items.map((item, idx) => (
-                                                        <tr key={idx} className="bg-white">
-                                                            <td className="p-2 relative">
-                                                                <input
-                                                                    list={`service-suggestions-${idx}`}
-                                                                    value={item.description}
-                                                                    onChange={(e) => handleItemChange(idx, 'description', e.target.value)}
-                                                                    placeholder="Type or select a service..."
-                                                                    className="w-full p-2.5 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                                                />
-                                                                <datalist id={`service-suggestions-${idx}`}>
-                                                                    {services.map(s => <option key={s.id} value={s.name} />)}
-                                                                </datalist>
-                                                            </td>
-                                                            <td className="p-2">
-                                                                <input
-                                                                    type="number"
-                                                                    min="1"
-                                                                    value={item.quantity || ''}
-                                                                    onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
-                                                                    className="w-full p-2.5 border border-slate-200 rounded-lg text-sm font-bold text-center outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                                                />
-                                                            </td>
-                                                            <td className="p-2">
-                                                                <input
-                                                                    type="number"
-                                                                    min="0"
-                                                                    value={item.unitPrice || ''}
-                                                                    onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)}
-                                                                    className="w-full p-2.5 border border-slate-200 rounded-lg text-sm font-bold text-right outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                                                />
-                                                            </td>
-                                                            <td className="p-2 text-right px-4">
-                                                                <span className="font-bold text-slate-900 text-sm">₹{item.total.toLocaleString()}</span>
-                                                            </td>
-                                                            <td className="p-2 text-center">
-                                                                <button
-                                                                    onClick={() => handleRemoveItem(idx)}
-                                                                    disabled={items.length === 1}
-                                                                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-30 flex items-center justify-center w-full"
-                                                                >
-                                                                    <Trash2 size={16} />
-                                                                </button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleAddItem}
-                                            className="mt-3 px-4 py-2 bg-slate-50 text-slate-600 hover:text-slate-900 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-100 border border-slate-200/50 transition-all flex items-center gap-2"
-                                        >
-                                            <Plus size={14} /> Add Row
-                                        </button>
-                                    </div>
-
-                                    {/* Bottom Info: Terms & Totals Side-by-Side */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end mt-auto">
-                                        {/* Terms */}
-                                        <div className="flex flex-col">
-                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Terms & Conditions</label>
-                                            <textarea
-                                                value={terms}
-                                                onChange={(e) => setTerms(e.target.value)}
-                                                rows={5}
-                                                className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs leading-relaxed text-slate-600 resize-y"
-                                            />
-                                        </div>
-
-                                        {/* Totals Box Minimal */}
-                                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 flex flex-col gap-3">
-                                            <div className="flex justify-between items-center text-sm font-medium text-slate-500">
-                                                <span>Subtotal</span>
-                                                <span className="text-slate-900 font-bold">₹{subtotal.toLocaleString()}</span>
+                                                    <table className="w-full text-left">
+                                                        <thead>
+                                                            <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                                                <th className="px-4 py-3 min-w-[280px]">Item Description</th>
+                                                                <th className="px-3 py-3 w-20 text-center">Qty</th>
+                                                                <th className="px-3 py-3 w-32 text-right">Unit Rate (₹)</th>
+                                                                <th className="px-4 py-3 w-32 text-right">Total (₹)</th>
+                                                                <th className="px-2 py-3 w-12 text-center">Act</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-slate-100">
+                                                            {items.map((item, idx) => (
+                                                                <tr key={idx} className="bg-white">
+                                                                    <td className="p-2 relative">
+                                                                        <input
+                                                                            list={`service-suggestions-${idx}`}
+                                                                            value={item.description}
+                                                                            onChange={(e) => handleItemChange(idx, 'description', e.target.value)}
+                                                                            placeholder="Type or select a service..."
+                                                                            className="w-full p-2.5 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                                        />
+                                                                        <datalist id={`service-suggestions-${idx}`}>
+                                                                            {services.map(s => <option key={s.id} value={s.name} />)}
+                                                                        </datalist>
+                                                                    </td>
+                                                                    <td className="p-2">
+                                                                        <input
+                                                                            type="number"
+                                                                            min="1"
+                                                                            value={item.quantity || ''}
+                                                                            onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
+                                                                            className="w-full p-2.5 border border-slate-200 rounded-lg text-sm font-bold text-center outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                                        />
+                                                                    </td>
+                                                                    <td className="p-2">
+                                                                        <input
+                                                                            type="number"
+                                                                            min="0"
+                                                                            value={item.unitPrice || ''}
+                                                                            onChange={(e) => handleItemChange(idx, 'unitPrice', e.target.value)}
+                                                                            className="w-full p-2.5 border border-slate-200 rounded-lg text-sm font-bold text-right outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                                        />
+                                                                    </td>
+                                                                    <td className="p-2 text-right px-4">
+                                                                        <span className="font-bold text-slate-900 text-sm">₹{item.total.toLocaleString()}</span>
+                                                                    </td>
+                                                                    <td className="p-2 text-center">
+                                                                        <button
+                                                                            onClick={() => handleRemoveItem(idx)}
+                                                                            disabled={items.length === 1}
+                                                                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all disabled:opacity-30 flex items-center justify-center w-full"
+                                                                        >
+                                                                            <Trash2 size={16} />
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleAddItem}
+                                                    className="mt-3 px-4 py-2 bg-slate-50 text-slate-600 hover:text-slate-900 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-slate-100 border border-slate-200/50 transition-all flex items-center gap-2"
+                                                >
+                                                    <Plus size={14} /> Add Row
+                                                </button>
                                             </div>
 
-                                            <div className="flex justify-between items-center text-sm font-medium text-slate-500">
-                                                <span>Discount (₹)</span>
-                                                <input
-                                                    type="number"
-                                                    value={discount || ''}
-                                                    onChange={(e) => setDiscount(Number(e.target.value))}
-                                                    className="w-24 px-2 py-1.5 bg-white border border-slate-200 rounded-md text-right text-slate-900 font-bold outline-none focus:border-blue-500 text-sm"
-                                                />
-                                            </div>
+                                            {/* Bottom Info: Terms & Totals Side-by-Side */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end mt-auto">
+                                                {/* Terms */}
+                                                <div className="flex flex-col">
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Terms & Conditions</label>
+                                                    <textarea
+                                                        value={terms}
+                                                        onChange={(e) => setTerms(e.target.value)}
+                                                        rows={5}
+                                                        className="w-full p-3 border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs leading-relaxed text-slate-600 resize-y"
+                                                    />
+                                                </div>
 
-                                            <div className="pt-3 border-t border-slate-200 flex justify-between items-end mt-1">
-                                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-800">Final Total</span>
-                                                <span className="text-2xl font-black text-blue-600 leading-none">₹{totalAmount.toLocaleString()}</span>
+                                                {/* Totals Box Minimal */}
+                                                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 flex flex-col gap-3">
+                                                    <div className="flex justify-between items-center text-sm font-medium text-slate-500">
+                                                        <span>Subtotal</span>
+                                                        <span className="text-slate-900 font-bold">₹{subtotal.toLocaleString()}</span>
+                                                    </div>
+
+                                                    <div className="flex justify-between items-center text-sm font-medium text-slate-500">
+                                                        <span>Discount (₹)</span>
+                                                        <input
+                                                            type="number"
+                                                            value={discount || ''}
+                                                            onChange={(e) => setDiscount(Number(e.target.value))}
+                                                            className="w-24 px-2 py-1.5 bg-white border border-slate-200 rounded-md text-right text-slate-900 font-bold outline-none focus:border-blue-500 text-sm"
+                                                        />
+                                                    </div>
+
+                                                    <div className="pt-3 border-t border-slate-200 flex justify-between items-end mt-1">
+                                                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-800">Final Total</span>
+                                                        <span className="text-2xl font-black text-blue-600 leading-none">₹{totalAmount.toLocaleString()}</span>
+                                                    </div>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
-                                    </>
-                                ) : (
+                                        </>
+                                    ) : (
                                         <div className="flex-1 flex flex-col min-h-[400px]">
                                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center justify-between">
                                                 <span>Custom HTML Code</span>

@@ -7,6 +7,7 @@ import { deleteField } from 'firebase/firestore';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 
 interface PaymentsProps {
     paymentAlerts: PaymentAlert[];
@@ -130,7 +131,7 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
         return data;
     };
 
-    const generateMonthlyReportPDF = (monthLabel: string, payments: PaymentAlert[], total: number, design: number, dev: number) => {
+    const generateMonthlyReportPDF = async (monthLabel: string, payments: PaymentAlert[], total: number, design: number, dev: number) => {
         const doc = new jsPDF();
 
         // Brand Colors
@@ -171,6 +172,10 @@ const Payments: React.FC<PaymentsProps> = ({ paymentAlerts, packages, clients })
             bodyStyles: { fontSize: 9, textColor: deepEclipse },
             columnStyles: { 4: { halign: 'right', fontStyle: 'bold' } }
         });
+
+        // Stamp watermark on all pages before saving
+        const watermarkB64 = await loadWatermarkBase64();
+        stampWatermarkAllPages(doc, watermarkB64);
 
         doc.save(`Financial_Report_${monthLabel.replace(' ', '_')}.pdf`);
     };

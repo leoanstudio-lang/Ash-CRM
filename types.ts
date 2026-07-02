@@ -1,5 +1,5 @@
 
-export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts';
+export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Marketing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts';
 export type Role = 'admin' | 'employee' | 'super_admin';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
@@ -105,28 +105,72 @@ export interface ContentAsset {
   createdAt: string;
 }
 
+export interface ProjectJourneyMilestone {
+  id: string;
+  date: string;
+  title: string;
+  desc: string;
+  completed: boolean;
+}
+
+export interface ProjectNote {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface MarketingReportEntry {
+  id: string;
+  date: string;
+  content: string;
+  submittedBy: string;
+  submittedById: string;
+  fileName?: string;
+}
+
+export interface MarketingServiceAllocation {
+  serviceId: string;
+  serviceName: string;
+  assignedEmployeeId?: string;
+  assignedEmployeeName?: string;
+  status: 'Pending' | 'Working' | 'Waiting' | 'Finished';
+  report?: string;
+  reportsHistory?: MarketingReportEntry[];
+  googleDocTabId?: string;
+  googleDocTabTitle?: string;
+}
+
 export interface Project {
   id: string;
   clientId: string;
   serviceId: string;
-  type: 'Web' | 'Full Dev' | 'Mobile' | 'Graphic' | 'SEO';
+  type: 'Web' | 'Full Dev' | 'Mobile' | 'Graphic' | 'SEO' | 'Marketing';
   priority: Priority;
   deadline: string;
   startDate: string;
-  createdAt?: string;
   totalAmount: number;
   advance: number;
   receivedAmount?: number; // New field for actual cash received
   description: string;
   status: string; // "Allocated", "Working", "Waiting", "Completed", etc.
   progress: number; // 0 to 100
+  createdAt: string;
+  completedAt?: string; // ISO Date String when status becomes 'Finished'/'Completed'
   assignedEmployeeId?: string;
   clientName?: string; // Denormalized for ease
   serviceName?: string; // Denormalized for ease
   packageId?: string; // Links task to a package (optional)
   packageLineItemIndex?: number; // Which line item in the package this task belongs to
-  completedAt?: string; // ISO Date String when status becomes 'Finished'/'Completed'
   deliveryFileName?: string; // File name / description entered by employee on task completion
+  documentation?: string; // Free-form Google Docs style documentation
+  notes?: ProjectNote[]; // Keep style notes
+  servicesAllocated?: MarketingServiceAllocation[]; // Services allocated for Marketing campaigns
+  marketingNotes?: string; // Shared WYSIWYG note document for Marketing campaigns
+  googleDocumentId?: string;
+  googleDocTitle?: string;
+  googleDocLastEdited?: string;
+  googleDocOwner?: string;
+  googleDocWebLink?: string;
 }
 
 export interface Lead {
@@ -173,6 +217,7 @@ export interface Campaign {
   status: 'Active' | 'Paused' | 'Completed';
   createdAt: string;
   isArchived?: boolean;
+  department?: string; // Which department to route closed deals to (e.g. 'Development', 'Graphics Designing', 'Marketing')
 }
 
 export interface ContactMethod {
@@ -232,7 +277,7 @@ export interface ActiveDeal {
   mobile?: string;
   email?: string;
 
-  outboundStage: 'New Prospect' | 'Contacted' | 'Qualified' | 'Proposal Sent' | 'Negotiation' | 'Closed Won' | 'Closed Lost';
+  outboundStage: 'New Prospect' | 'Contacted' | 'Qualified' | 'Proposal Sent' | 'Quotation' | 'Negotiation' | 'Closed Won' | 'Closed Lost';
   stageEnteredAt: string;
   leadScore: number;
   value?: number;
@@ -387,6 +432,9 @@ export interface CompanyProfile {
   logoUrl?: string;
   contacts: DynamicField[];
   socials: DynamicField[];
+  googleRefreshToken?: string;
+  googleClientId?: string;
+  googleClientSecret?: string;
 }
 
 export interface AIConfig {
@@ -422,6 +470,13 @@ export interface Quotation {
   isNewClient: boolean;
   isCustomHtml?: boolean;
   customHtmlContent?: string;
+  salesDealId?: string; // Optional reference to the Sales Deal it was created from
+  salesType?: 'Inbound' | 'Outbound'; // Optional indicator of sales source
+  sourceCampaignName?: string; // Optional campaign name context
+  salesDealBackup?: any; // Backup of sales deal data for undo/restore
+  originalCollection?: string; // Original collection name (e.g. activeDeals, inboundActiveDeals)
+  createdClientId?: string; // Auto-created client ID to delete on undo
+  createdProjectId?: string; // Auto-created project ID to delete on undo
 }
 // --- Quotation Demo Types ---
 

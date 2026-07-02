@@ -4,6 +4,7 @@ import { calculateDepreciation } from '../../lib/accounting';
 import { PieChart, FileText, Download, TrendingUp, TrendingDown } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { loadWatermarkBase64, stampWatermarkAllPages } from '../../lib/pdfWatermark';
 import * as XLSX from 'xlsx';
 
 interface ReportsViewProps {
@@ -341,7 +342,7 @@ const ReportsView: React.FC<ReportsViewProps> = ({ journalEntries, categories, a
         </div>
     );
 
-    const handleExportPDF = () => {
+    const handleExportPDF = async () => {
         const doc = new jsPDF();
         doc.setFontSize(20);
         doc.text(`${reportType === 'pnl' ? 'Income Statement' : 'Balance Sheet'}`, 14, 22);
@@ -401,6 +402,10 @@ const ReportsView: React.FC<ReportsViewProps> = ({ journalEntries, categories, a
                 theme: 'grid'
             });
         }
+
+        // Stamp watermark on all pages before saving
+        const watermarkB64 = await loadWatermarkBase64();
+        stampWatermarkAllPages(doc, watermarkB64);
 
         doc.save(`${reportType}_${dateRange}.pdf`);
     };
