@@ -19,13 +19,22 @@ import QuotationsView from './components/Quotations';
 import ContentStudio from './components/ContentStudio';
 import RiskMonitorModal from './components/Strategies/RiskMonitorModal';
 import AccountingLayout from './components/Accounting/AccountingLayout';
-import { Bell } from 'lucide-react';
+import InternalHub from './components/InternalHub';
+import Attendance from './components/Attendance';
+import { Bell, LogOut } from 'lucide-react';
 import { subscribeToCollection, getCompanyProfile, saveCompanyProfile } from './lib/db';
 import { auth, signOut } from './lib/firebase';
 import { Quotation, QuotationDemo } from './types';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
+  const [currentUser, setCurrentUser] = useState<Employee | null>(() => {
+    const saved = localStorage.getItem('crm_current_user');
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [activeSection, setActiveSection] = useState<Section>('Execution Center');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [autoOpenProspectId, setAutoOpenProspectId] = useState<string | null>(null);
@@ -135,6 +144,12 @@ const App: React.FC = () => {
   const [strategyTodos, setStrategyTodos] = useState<any[]>([]);
   const [manualTasks, setManualTasks] = useState<ManualTask[]>([]);
   const [employeeNotifications, setEmployeeNotifications] = useState<EmployeeNotification[]>([]);
+  const [hubIssues, setHubIssues] = useState<any[]>([]);
+  const [hubResourceRequests, setHubResourceRequests] = useState<any[]>([]);
+  const [hubAnnouncements, setHubAnnouncements] = useState<any[]>([]);
+  const [hubCourses, setHubCourses] = useState<any[]>([]);
+  const [hubImprovements, setHubImprovements] = useState<any[]>([]);
+  const [hubSuggestions, setHubSuggestions] = useState<any[]>([]);
 
   // Content Studio
   const [contentMonths, setContentMonths] = useState<any[]>([]);
@@ -193,6 +208,12 @@ const App: React.FC = () => {
     const unsubContentAssets = subscribeToCollection<any>('contentAssets', setContentAssets);
     const unsubManualTasks = subscribeToCollection<ManualTask>('manualTasks', setManualTasks);
     const unsubEmployeeNotifications = subscribeToCollection<EmployeeNotification>('employeeNotifications', setEmployeeNotifications);
+    const unsubHubIssues = subscribeToCollection<any>('issues', setHubIssues);
+    const unsubHubResourceRequests = subscribeToCollection<any>('resourceRequests', setHubResourceRequests);
+    const unsubHubAnnouncements = subscribeToCollection<any>('companyAnnouncements', setHubAnnouncements);
+    const unsubHubCourses = subscribeToCollection<any>('trainingCourses', setHubCourses);
+    const unsubHubImprovements = subscribeToCollection<any>('dailyImprovements', setHubImprovements);
+    const unsubHubSuggestions = subscribeToCollection<any>('suggestions', setHubSuggestions);
 
     return () => {
       unsubClients();
@@ -226,6 +247,12 @@ const App: React.FC = () => {
       unsubManualTasks();
       unsubEmployeeNotifications();
       unsubQuotationDemos();
+      unsubHubIssues();
+      unsubHubResourceRequests();
+      unsubHubAnnouncements();
+      unsubHubCourses();
+      unsubHubImprovements();
+      unsubHubSuggestions();
     };
   }, []);
 
@@ -299,18 +326,207 @@ const App: React.FC = () => {
     setDismissedNotificationIds(prev => new Set([...Array.from(prev), ...allIds]));
   };
 
-  const handleLogin = (user: Employee) => {
+  const handleLogin = async (user: Employee, ipAddress?: string, lateReason?: string, lateMinutes?: number) => {
     setCurrentUser(user);
-    if (user.role === 'employee') setActiveSection('Execution Center');
+    localStorage.setItem('crm_current_user', JSON.stringify(user));
+    
+    if (user.role === 'employee') {
+      setActiveSection('Execution Center');
+      try {
+        const ip = ipAddress || 'Unknown';
+        const { logEmployeeLoginWithReason } = await import('./lib/db');
+        await logEmployeeLoginWithReason(user.id, user.name, ip, 'Desktop Browser', lateReason, lateMinutes);
+      } catch (err) {
+        console.error("Error logging employee login:", err);
+      }
+    }
   };
 
-  const handleLogout = () => {
-    // Sign out of Firebase if the current session is an admin (email-based login)
-    if (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') {
-      signOut(auth).catch(console.error);
+  const handleLogout = async () => {
+    if (currentUser) {
+      if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+        signOut(auth).catch(console.error);
+      } else if (currentUser.role === 'employee') {
+        try {
+          const { logEmployeeLogout } = await import('./lib/db');
+          await logEmployeeLogout(currentUser.id);
+        } catch (err) {
+          console.error("Error logging employee logout:", err);
+        }
+      }
     }
     setCurrentUser(null);
+    localStorage.removeItem('crm_current_user');
   };
+
+  // Keep currentUser synced with latest employees list
+  useEffect(() => {
+    if (employees.length === 0) return; // Wait until employees array is loaded from Firestore to prevent logout race condition on refresh
+    if (currentUser && currentUser.role !== 'super_admin' && currentUser.role !== 'admin') {
+      const latest = employees.find(emp => emp.id === currentUser.id);
+      if (latest) {
+        if (JSON.stringify(latest) !== JSON.stringify(currentUser)) {
+          setCurrentUser(latest);
+          localStorage.setItem('crm_current_user', JSON.stringify(latest));
+        }
+      } else {
+        handleLogout();
+      }
+    }
+  }, [employees, currentUser]);
+
+  // Heartbeat & disruption logging for employees
+  useEffect(() => {
+    if (!currentUser || currentUser.role === 'admin' || currentUser.role === 'super_admin') return;
+
+    let isSubscribed = true;
+
+    const checkForDisruptionAndStartHeartbeat = async () => {
+      try {
+        const { db } = await import('./lib/firebase');
+        const { doc, getDoc, updateDoc, setDoc } = await import('firebase/firestore');
+
+        const localDate = new Date();
+        const dateYMD = localDate.getFullYear() + '-' + 
+                        String(localDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                        String(localDate.getDate()).padStart(2, '0');
+        const docId = `${currentUser.id}_${dateYMD}`;
+        const docRef = doc(db, 'attendance', docId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists() && isSubscribed) {
+          const record = docSnap.data();
+          const sessions = record.sessions || [];
+          const activeIdx = sessions.findIndex((s: any) => s.logoutTime === null);
+
+          if (activeIdx !== -1) {
+            const activeSession = sessions[activeIdx];
+            if (activeSession.lastPingTime) {
+              const lastPing = new Date(activeSession.lastPingTime).getTime();
+              const now = Date.now();
+              const gap = now - lastPing;
+
+              // Gap greater than 3 minutes (180000ms) means system crash/PC shutdown
+              if (gap > 180000) {
+                const logId = `LOG_${Date.now()}`;
+                await setDoc(doc(db, 'system_logs', logId), {
+                  id: logId,
+                  employeeId: currentUser.id,
+                  employeeName: currentUser.name,
+                  date: dateYMD,
+                  offTime: activeSession.lastPingTime,
+                  reenterTime: new Date().toISOString(),
+                  type: 'disruption'
+                });
+              }
+            }
+
+            // Update lastPingTime to now to confirm recovery
+            const updatedSessions = [...sessions];
+            updatedSessions[activeIdx] = {
+              ...activeSession,
+              lastPingTime: new Date().toISOString()
+            };
+            await updateDoc(docRef, { sessions: updatedSessions });
+          }
+        }
+      } catch (err) {
+        console.error("Error checking disruption logs:", err);
+      }
+    };
+
+    checkForDisruptionAndStartHeartbeat();
+
+    // Heartbeat ticker (runs every 30 seconds)
+    const interval = setInterval(async () => {
+      try {
+        const { db } = await import('./lib/firebase');
+        const { doc, getDoc, updateDoc } = await import('firebase/firestore');
+
+        const localDate = new Date();
+        const dateYMD = localDate.getFullYear() + '-' + 
+                        String(localDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                        String(localDate.getDate()).padStart(2, '0');
+        const docId = `${currentUser.id}_${dateYMD}`;
+        const docRef = doc(db, 'attendance', docId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists() && isSubscribed) {
+          const record = docSnap.data();
+          const sessions = record.sessions || [];
+          const activeIdx = sessions.findIndex((s: any) => s.logoutTime === null);
+
+          if (activeIdx !== -1) {
+            const updatedSessions = [...sessions];
+            updatedSessions[activeIdx] = {
+              ...updatedSessions[activeIdx],
+              lastPingTime: new Date().toISOString()
+            };
+            await updateDoc(docRef, { sessions: updatedSessions });
+          }
+        }
+      } catch (err) {
+        console.error("Error posting heartbeat:", err);
+      }
+    }, 30000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [currentUser]);
+
+  // Auto start a login session on a new day if the employee is still logged in
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'employee') {
+      const checkAndCreateSession = async () => {
+        try {
+          const { getAttendanceSettings, logEmployeeLoginWithReason } = await import('./lib/db');
+          const settings = await getAttendanceSettings();
+          
+          let ip = 'Restore Session';
+          if (settings?.ipRestrictionEnabled) {
+            try {
+              const { getUserPublicIP } = await import('./components/Login');
+              ip = await getUserPublicIP();
+            } catch {}
+          }
+          
+          const localDate = new Date();
+          const dateYMD = localDate.getFullYear() + '-' + 
+                          String(localDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                          String(localDate.getDate()).padStart(2, '0');
+          
+          const { doc, getDoc } = await import('firebase/firestore');
+          const { db } = await import('./lib/firebase');
+          const docRef = doc(db, 'attendance', `${currentUser.id}_${dateYMD}`);
+          const docSnap = await getDoc(docRef);
+          
+          if (!docSnap.exists() || !(docSnap.data()?.sessions?.length > 0)) {
+            let lateReason = null;
+            let lateMinutes = null;
+            
+            if (settings?.lateTrackingEnabled) {
+              const [startHour, startMin] = (settings.officialStartTime || '09:00').split(':').map(Number);
+              const shiftStartLocal = new Date(localDate.getFullYear(), localDate.getMonth(), localDate.getDate(), startHour, startMin, 0);
+              const gracePeriodEnd = new Date(shiftStartLocal.getTime() + (settings.lateGracePeriod || 15) * 60 * 1000);
+              
+              if (localDate.getTime() > gracePeriodEnd.getTime()) {
+                const diffMs = localDate.getTime() - shiftStartLocal.getTime();
+                lateMinutes = Math.floor(diffMs / 60000);
+                lateReason = 'System Auto-Restore Session';
+              }
+            }
+            
+            await logEmployeeLoginWithReason(currentUser.id, currentUser.name, ip, 'Desktop Browser', lateReason, lateMinutes);
+          }
+        } catch (e) {
+          console.error("Auto session creation error:", e);
+        }
+      };
+      checkAndCreateSession();
+    }
+  }, [currentUser]);
 
   // Only non-admin employees use the Firestore username/password login.
   // Admins MUST use Firebase Email Authentication exclusively.
@@ -330,6 +546,10 @@ const App: React.FC = () => {
         quotationDemos={quotationDemos}
         setProjects={setProjects}
         onLogout={handleLogout}
+        employees={employees}
+        announcements={hubAnnouncements}
+        courses={hubCourses}
+        issues={hubIssues}
       />
     );
   }
@@ -362,6 +582,8 @@ const App: React.FC = () => {
       case 'Accounts': return <AccountingLayout />;
       case 'Payments': return <Payments paymentAlerts={paymentAlerts} packages={packages} clients={clients} />;
       case 'Content Studio': return <ContentStudio months={contentMonths} cards={contentCards} assets={contentAssets} />;
+      case 'Internal Hub': return <InternalHub currentUser={currentUser} employees={employees} />;
+      case 'Attendance': return <Attendance employees={employees} currentUser={currentUser} />;
       case 'Notification': return <Notifications
         notifications={notifications}
         employeeNotifications={employeeNotifications}
@@ -445,7 +667,11 @@ const App: React.FC = () => {
     Notification: notifications.length + employeeNotifications.filter(n => n.status === 'pending_review').length,
     Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
     Strategies: calculateStrategyBadge(),
-    'Content Studio': calculateContentBadge()
+    'Content Studio': calculateContentBadge(),
+    'Internal Hub': hubIssues.filter(i => i.status === 'Open').length +
+                  hubResourceRequests.filter(r => r.status === 'Pending').length +
+                  hubImprovements.filter(imp => imp.status === 'Submitted').length +
+                  hubSuggestions.filter(s => s.status === 'New').length
   };
 
   return (
@@ -499,6 +725,13 @@ const App: React.FC = () => {
               {notifications.length > 0 && (
                 <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>
               )}
+            </button>
+            <button
+              onClick={handleLogout}
+              title="Sign Out"
+              className="p-2 md:p-3 rounded-2xl hover:bg-red-50 hover:text-red-600 text-slate-500 hover:border-red-150 border border-slate-100 shadow-sm bg-white transition-all flex items-center justify-center cursor-pointer"
+            >
+              <LogOut size={20} />
             </button>
             <div className="flex items-center gap-4 pl-0 md:pl-4 md:border-l border-slate-200">
               <div className="text-right hidden sm:block">

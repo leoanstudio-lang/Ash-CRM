@@ -1,13 +1,33 @@
-
 import React, { useState } from 'react';
 import { Employee } from '../types';
-import { Lock, User, Eye, EyeOff, Loader2 } from 'lucide-react';
-import { auth, signInWithEmailAndPassword } from '../lib/firebase';
+import { Lock, User, Eye, EyeOff, Loader2, Clock } from 'lucide-react';
+import { auth, signInWithEmailAndPassword, db } from '../lib/firebase';
 
 interface LoginProps {
   employees: Employee[];
-  onLogin: (user: Employee) => void;
+  onLogin: (user: Employee, ipAddress?: string, lateReason?: string, lateMinutes?: number) => void;
 }
+
+export const getUserPublicIP = async (): Promise<string> => {
+  const services = [
+    'https://api.ipify.org?format=json',
+    'https://api.seeip.org/jsonip',
+    'https://ipapi.co/json/'
+  ];
+  for (const url of services) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        const ip = data.ip || data.jsonip;
+        if (ip) return ip;
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch IP from ${url}:`, e);
+    }
+  }
+  throw new Error('Unable to determine public IP address.');
+};
 
 const Login: React.FC<LoginProps> = ({ employees, onLogin }) => {
   const [username, setUsername] = useState('');
@@ -15,6 +35,15 @@ const Login: React.FC<LoginProps> = ({ employees, onLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // Late reason capturing state
+  const [pendingLateInfo, setPendingLateInfo] = useState<{
+    user: Employee;
+    ip: string;
+    lateMinutes: number;
+  } | null>(null);
+  const [lateReason, setLateReason] = useState('Traffic / Road Congestion');
+  const [customLateReason, setCustomLateReason] = useState('');
 
   const isEmail = (value: string) => value.includes('@');
 
@@ -45,18 +74,83 @@ const Login: React.FC<LoginProps> = ({ employees, onLogin }) => {
         }
       } else {
         // ── EMPLOYEE PATH: Firestore Username/Password lookup ──
-        // NOTE: employees list passed here already excludes admin-role users (filtered in App.tsx)
         const user = employees.find(
           emp => emp.username === username && emp.password === password
         );
-        if (user) {
-          onLogin(user);
-        } else {
+        if (!user) {
           setError('Invalid username or password. Admins must sign in with their email address.');
+          setIsLoading(false);
+          return;
         }
+
+        // 1. Fetch settings from Firestore doc config/attendance_settings
+        const { getDoc, doc } = await import('firebase/firestore');
+        const settingsSnap = await getDoc(doc(db, 'config', 'attendance_settings'));
+        const settings = settingsSnap.exists() ? settingsSnap.data() : {
+          officialWorkingHours: 8,
+          officialStartTime: '09:00',
+          lateTrackingEnabled: false,
+          lateGracePeriod: 15,
+          ipRestrictionEnabled: false,
+          approvedIPs: []
+        };
+
+        // 2. Validate IP Restriction
+        let userIp = 'Unknown';
+        if (settings.ipRestrictionEnabled) {
+          try {
+            userIp = await getUserPublicIP();
+            const approved = settings.approvedIPs || [];
+            if (!approved.includes(userIp)) {
+              setError(`Access denied. Your public IP (${userIp}) is not registered on the office network.`);
+              setIsLoading(false);
+              return;
+            }
+          } catch (ipErr) {
+            setError('Access blocked. Unable to verify your office network connection.');
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          try {
+            userIp = await getUserPublicIP();
+          } catch {}
+        }
+
+        // 3. Check for Late Arrival
+        const localDate = new Date();
+        const dateYMD = localDate.getFullYear() + '-' + 
+                        String(localDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                        String(localDate.getDate()).padStart(2, '0');
+        
+        const attendanceDocRef = doc(db, 'attendance', `${user.id}_${dateYMD}`);
+        const attendanceSnap = await getDoc(attendanceDocRef);
+        const hasSessions = attendanceSnap.exists() && (attendanceSnap.data()?.sessions?.length > 0);
+
+        if (!hasSessions && settings.lateTrackingEnabled) {
+          const [startHour, startMin] = (settings.officialStartTime || '09:00').split(':').map(Number);
+          const shiftStartLocal = new Date(localDate.getFullYear(), localDate.getMonth(), localDate.getDate(), startHour, startMin, 0);
+          const gracePeriodEnd = new Date(shiftStartLocal.getTime() + (settings.lateGracePeriod || 15) * 60 * 1000);
+
+          if (localDate.getTime() > gracePeriodEnd.getTime()) {
+            const diffMs = localDate.getTime() - shiftStartLocal.getTime();
+            const lateMins = Math.floor(diffMs / 60000);
+
+            // Trigger Late Reason collection phase
+            setPendingLateInfo({
+              user,
+              ip: userIp,
+              lateMinutes: lateMins
+            });
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // Complete normal login if not late or already checked in today
+        onLogin(user, userIp);
       }
     } catch (err: any) {
-      // Firebase error codes → friendly messages
       const code = err?.code || '';
       if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
         setError('Invalid email or password.');
@@ -71,6 +165,87 @@ const Login: React.FC<LoginProps> = ({ employees, onLogin }) => {
       setIsLoading(false);
     }
   };
+
+  const handleLateReasonSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingLateInfo) return;
+
+    const finalReason = lateReason === 'Other' ? customLateReason.trim() : lateReason;
+    if (!finalReason) {
+      alert("Please enter a reason for your late arrival.");
+      return;
+    }
+
+    onLogin(pendingLateInfo.user, pendingLateInfo.ip, finalReason, pendingLateInfo.lateMinutes);
+    setPendingLateInfo(null);
+  };
+
+  if (pendingLateInfo) {
+    const reasonsList = [
+      'Traffic / Road Congestion',
+      'Medical Appointment / Health Issue',
+      'Public Transport Delay',
+      'Personal / Family Emergency',
+      'Bad Weather Conditions',
+      'Other'
+    ];
+
+    return (
+      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white/5 backdrop-blur-xl p-8 rounded-3xl border border-white/10 shadow-2xl">
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-amber-500/10 text-amber-500 rounded-2xl border border-amber-500/20 mb-4 animate-pulse">
+              <Clock size={32} />
+            </div>
+            <h2 className="text-2xl font-bold text-white tracking-tight">Late Arrival Registered</h2>
+            <p className="text-slate-400 text-sm mt-2">
+              You are check-in ready but logging in <span className="text-amber-400 font-semibold">{pendingLateInfo.lateMinutes} minutes late</span> today.
+            </p>
+          </div>
+
+          <form onSubmit={handleLateReasonSubmit} className="space-y-6">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                Reason for Late Arrival
+              </label>
+              <select
+                className="w-full bg-slate-900 border border-slate-700 text-white px-3 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                value={lateReason}
+                onChange={e => setLateReason(e.target.value)}
+              >
+                {reasonsList.map(r => (
+                  <option key={r} value={r} className="bg-slate-900 text-white">{r}</option>
+                ))}
+              </select>
+            </div>
+
+            {lateReason === 'Other' && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Please Specify
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Describe details..."
+                  className="w-full bg-slate-900 border border-slate-700 text-white px-4 py-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder:text-slate-600"
+                  value={customLateReason}
+                  onChange={e => setCustomLateReason(e.target.value)}
+                />
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-blue-600/20 transition-all flex items-center justify-center gap-2 group"
+            >
+              Confirm & Access Dashboard <div className="w-5 h-px bg-white/30 group-hover:w-8 transition-all"></div>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-4">

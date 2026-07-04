@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo, MarketingServiceAllocation, MarketingReportEntry, ProjectNote } from '../types';
-import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare, ArrowLeft, Layers, FileText, Download, Save, Trash2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered } from 'lucide-react';
+import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare, ArrowLeft, Layers, FileText, Download, Save, Trash2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Building2 } from 'lucide-react';
 import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB, updateManualTaskInDB, updateQuotationDemoInDB } from '../lib/db';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -8,8 +8,9 @@ import NewManualTaskModal from './NewManualTaskModal';
 import jsPDF from 'jspdf';
 import GoogleDocsWorkspace from './GoogleDocsWorkspace';
 import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
+import InternalHub from './InternalHub';
 
-type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working' | 'demos';
+type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working' | 'demos' | 'internal_hub';
 
 interface EmployeePanelProps {
   employee: Employee;
@@ -19,14 +20,52 @@ interface EmployeePanelProps {
   quotationDemos?: QuotationDemo[];
   setProjects?: React.Dispatch<React.SetStateAction<Project[]>>;
   onLogout: () => void;
+  employees?: Employee[];
+  announcements?: any[];
+  courses?: any[];
+  issues?: any[];
 }
 
-const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clients, manualTasks = [], quotationDemos = [], onLogout }) => {
+const EmployeePanel: React.FC<EmployeePanelProps> = ({ 
+  employee, 
+  projects, 
+  clients, 
+  manualTasks = [], 
+  quotationDemos = [], 
+  onLogout, 
+  employees = [], 
+  announcements = [], 
+  courses = [], 
+  issues = [] 
+}) => {
   if (employee.department === 'Marketing') {
-    return <MarketingEmployeePanel employee={employee} projects={projects} clients={clients} onLogout={onLogout} />;
+    return (
+      <MarketingEmployeePanel 
+        employee={employee} 
+        projects={projects} 
+        clients={clients} 
+        onLogout={onLogout} 
+        employees={employees} 
+        announcements={announcements} 
+        courses={courses} 
+        issues={issues} 
+      />
+    );
   }
 
   const [currentView, setCurrentView] = useState<EmployeeView>('dashboard');
+
+  // Hub badge calculation for standard employees
+  const unreadAnnouncementsCount = announcements.filter(a => !a.readBy?.includes(employee.id)).length;
+  const assignedIssuesCount = issues.filter(i => 
+    i.assignedTo === employee.id && 
+    (i.status === 'Open' || i.status === 'Assigned' || i.status === 'In Progress')
+  ).length;
+  const incompleteCoursesCount = courses.filter(c => 
+    (c.assignedEmployees?.includes(employee.id) || c.department === 'All Departments' || c.department === employee.department) && 
+    !c.completedBy?.some((comp: any) => comp.employeeId === employee.id)
+  ).length;
+  const hubBadgeCount = unreadAnnouncementsCount + assignedIssuesCount + incompleteCoursesCount;
   const [showNewTaskModal, setShowNewTaskModal] = useState(false);
   const [newTaskSuccess, setNewTaskSuccess] = useState(false);
 
@@ -441,6 +480,23 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                 </span>
               )}
             </button>
+
+            {/* Internal Hub */}
+            <button
+              onClick={() => setCurrentView('internal_hub')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-black transition-all uppercase text-[9px] tracking-widest ${currentView === 'internal_hub'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                }`}
+            >
+              <Building2 size={16} />
+              <span className="hidden lg:block flex-1 text-left">Internal Hub</span>
+              {hubBadgeCount > 0 && (
+                <span className="ml-auto bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse">
+                  {hubBadgeCount}
+                </span>
+              )}
+            </button>
           </nav>
         </div>
         <div className="mt-auto p-4">
@@ -473,7 +529,7 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
 
         {/* Mobile Navigation (Visible only on mobile since sidebar is hidden) */}
         <div className="lg:hidden mb-4">
-          <div className="grid grid-cols-4 gap-2 bg-white p-2 rounded-2xl border border-slate-100 shadow-sm">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 bg-white p-2 rounded-2xl border border-slate-100 shadow-sm">
             <button
               onClick={() => setCurrentView('dashboard')}
               className={`flex flex-col items-center gap-1 px-2 py-2 rounded-xl text-[8px] font-black uppercase tracking-wider transition-all ${currentView === 'dashboard'
@@ -544,6 +600,21 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setCurrentView('internal_hub')}
+              className={`relative flex flex-col items-center gap-1 px-2 py-2 rounded-xl text-[8px] font-black uppercase tracking-wider transition-all ${currentView === 'internal_hub'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-400 hover:bg-slate-50'
+                }`}
+            >
+              <Building2 size={14} />
+              <span>Hub</span>
+              {hubBadgeCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full min-w-[16px] text-center">
+                  {hubBadgeCount}
+                </span>
+              )}
+            </button>
           </div>
           <button
             onClick={onLogout}
@@ -553,8 +624,14 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
           </button>
         </div>
 
-        {/* Top Stats Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        {currentView === 'internal_hub' ? (
+          <div className="flex-1 overflow-y-auto">
+            <InternalHub currentUser={employee} employees={employees} />
+          </div>
+        ) : (
+          <>
+            {/* Top Stats Bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           <div className="bg-white px-5 py-4 rounded-[1.5rem] border border-slate-100 shadow-sm flex items-center justify-between">
             <div className="flex flex-col">
               <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Pending</span>
@@ -935,7 +1012,9 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({ employee, projects, clien
             )}
           </div>
         </div>
-      </main>
+      </>
+    )}
+  </main>
 
       {/* New Manual Task Modal */}
       {showNewTaskModal && (
@@ -1035,6 +1114,10 @@ interface MarketingEmployeePanelProps {
   projects: Project[];
   clients: Client[];
   onLogout: () => void;
+  employees?: Employee[];
+  announcements?: any[];
+  courses?: any[];
+  issues?: any[];
 }
 
 interface RichTextEditorProps {
@@ -1068,7 +1151,29 @@ const RichTextEditor = React.memo(({ initialValue, onInput, onPaste, className, 
   return prevProps.serviceId === nextProps.serviceId;
 });
 
-const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({ employee, projects, clients, onLogout }) => {
+const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({ 
+  employee, 
+  projects, 
+  clients, 
+  onLogout, 
+  employees = [], 
+  announcements = [], 
+  courses = [], 
+  issues = [] 
+}) => {
+  const [marketingView, setMarketingView] = useState<'campaigns' | 'internal_hub'>('campaigns');
+
+  // Hub badge calculation for marketing employees
+  const unreadAnnouncementsCount = announcements.filter(a => !a.readBy?.includes(employee.id)).length;
+  const assignedIssuesCount = issues.filter(i => 
+    i.assignedTo === employee.id && 
+    (i.status === 'Open' || i.status === 'Assigned' || i.status === 'In Progress')
+  ).length;
+  const incompleteCoursesCount = courses.filter(c => 
+    (c.assignedEmployees?.includes(employee.id) || c.department === 'All Departments' || c.department === employee.department) && 
+    !c.completedBy?.some((comp: any) => comp.employeeId === employee.id)
+  ).length;
+  const hubBadgeCount = unreadAnnouncementsCount + assignedIssuesCount + incompleteCoursesCount;
   const [activeProjId, setActiveProjId] = useState<string | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<'services' | 'reports' | 'notes'>('services');
   const [reportTexts, setReportTexts] = useState<Record<string, string>>({});
@@ -1354,10 +1459,32 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({ employe
 
         <nav className="flex-1 px-3 space-y-1">
           <button
-            onClick={() => setActiveProjId(null)}
-            className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${!activeProjId ? 'bg-slate-850 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-850 hover:text-white'}`}
+            onClick={() => {
+              setMarketingView('campaigns');
+              setActiveProjId(null);
+            }}
+            className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
+              marketingView === 'campaigns' && !activeProjId ? 'bg-slate-850 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-850 hover:text-white'
+            }`}
           >
             <LayoutDashboard size={13} /> My Campaigns
+          </button>
+
+          <button
+            onClick={() => setMarketingView('internal_hub')}
+            className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+              marketingView === 'internal_hub' ? 'bg-slate-850 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-850/50 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Building2 size={13} className={marketingView === 'internal_hub' ? 'text-white' : 'text-slate-400'} /> 
+              <span>Internal Hub</span>
+            </div>
+            {hubBadgeCount > 0 && (
+              <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                {hubBadgeCount}
+              </span>
+            )}
           </button>
         </nav>
 
@@ -1373,7 +1500,11 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({ employe
 
       {/* Main Workspace Body */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {activeProj ? (
+        {marketingView === 'internal_hub' ? (
+          <div className="flex-1 overflow-y-auto p-5 bg-slate-105">
+            <InternalHub currentUser={employee} employees={employees} />
+          </div>
+        ) : activeProj ? (
           <div className="flex-1 flex flex-col overflow-hidden p-5 animate-in fade-in duration-200 bg-slate-100/40">
             <div className="flex items-center gap-4 mb-4">
               <button

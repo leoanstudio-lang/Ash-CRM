@@ -1,6 +1,6 @@
 
-export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Marketing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts';
-export type Role = 'admin' | 'employee' | 'super_admin';
+export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Marketing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts' | 'Internal Hub' | 'Attendance';
+export type Role = 'admin' | 'employee' | 'super_admin' | 'team_lead' | 'dept_manager' | 'hr';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
 export interface TimeLog {
@@ -595,4 +595,258 @@ export interface EmployeeNotification {
   priority: Priority;
   status: 'pending_review' | 'confirmed' | 'rejected';
   createdAt: string;
+}
+
+// --- INTERNAL HUB TYPES ---
+
+export interface DailyImprovement {
+  id: string;
+  title: string;
+  description: string;
+  department: string;
+  category: 'Productivity' | 'Quality' | 'Cost Saving' | 'Customer Experience' | 'Automation' | 'Process' | 'Innovation' | 'Documentation';
+  businessImpact: string;
+  timeSaved: string; // e.g. "30 mins", "2 hours"
+  attachments: string[]; // URLs or file names
+  submittedBy: string; // Employee ID
+  submittedByName: string; // Employee Name
+  submittedDate: string; // ISO String
+  status: 'Submitted' | 'Under Review' | 'Approved' | 'Implemented' | 'Rejected';
+  managerComments?: string;
+}
+
+export interface IssueReport {
+  id: string;
+  title: string;
+  description: string;
+  department: string;
+  priority: 'Low' | 'Medium' | 'High' | 'Critical';
+  category: 'CRM' | 'Software' | 'Hardware' | 'Internet' | 'Client' | 'Communication' | 'Process' | 'HR' | 'Finance' | 'Operations' | 'Other';
+  attachments: string[];
+  submittedBy: string;
+  submittedByName: string;
+  assignedTo?: string; // Employee ID
+  assignedToName?: string; // Employee Name
+  status: 'Open' | 'Assigned' | 'In Progress' | 'Waiting' | 'Resolved' | 'Closed';
+  resolutionNotes?: string;
+  createdAt: string; // ISO String
+}
+
+export interface Suggestion {
+  id: string;
+  title: string;
+  description: string;
+  businessBenefit: string;
+  difficulty: 'Low' | 'Medium' | 'High';
+  department: string;
+  attachments: string[];
+  submittedBy: string;
+  submittedByName: string;
+  status: 'New' | 'Under Review' | 'Approved' | 'Planned' | 'Implemented' | 'Rejected';
+  managerFeedback?: string;
+  createdAt: string;
+}
+
+export interface ProcessImprovement {
+  id: string;
+  currentProcess: string;
+  proposedProcess: string;
+  benefits: string;
+  timeSaved: string;
+  expectedOutcome: string;
+  attachments: string[];
+  submittedBy: string;
+  submittedByName: string;
+  createdAt: string;
+}
+
+export interface ResourceRequest {
+  id: string;
+  resourceName: string;
+  reason: string;
+  priority: 'Low' | 'Medium' | 'High';
+  requiredDate: string;
+  submittedBy: string;
+  submittedByName: string;
+  status: 'Pending' | 'Approved' | 'Ordered' | 'Delivered' | 'Rejected';
+  managerNotes?: string;
+  createdAt: string;
+}
+
+export interface Announcement {
+  id: string;
+  title: string;
+  content: string;
+  category: 'Event' | 'Holiday' | 'Policy' | 'Introduction' | 'Update' | 'Meeting';
+  publishedBy: string;
+  publishedById: string;
+  date: string; // ISO String
+  readBy: string[]; // Array of employee IDs who clicked read
+}
+
+export interface KBArticle {
+  id: string;
+  title: string;
+  content: string;
+  category: 'Company Policies' | 'Client Guidelines' | 'Branding Standards' | 'CRM Guides' | 'Marketing Guides' | 'Sales Guides' | 'HR Documents';
+  tags: string[];
+  attachments: string[];
+  lastUpdated: string;
+  updatedBy: string;
+  version: number;
+  views: number;
+}
+
+export interface SOP {
+  id: string;
+  title: string;
+  department: 'Graphic Design' | 'Digital Marketing' | 'Sales' | 'Accounts' | 'HR' | 'Development';
+  content: string; // Step-by-step markdown content
+  attachments: string[];
+  lastUpdated: string;
+  version: number;
+}
+
+export interface QuestionAnswer {
+  id: string;
+  content: string;
+  submittedBy: string;
+  submittedByName: string;
+  createdAt: string;
+}
+
+export interface QuestionThread {
+  id: string;
+  title: string;
+  content: string;
+  submittedBy: string;
+  submittedByName: string;
+  tags: string[];
+  repliesCount: number;
+  acceptedAnswerId?: string; // ID of QuestionAnswer
+  answers: QuestionAnswer[];
+  createdAt: string;
+}
+
+export interface EmployeeRecognition {
+  id: string;
+  type: 'Team Player' | 'Innovation Award' | 'Best Performer' | 'Fast Delivery' | 'Customer Appreciation' | 'Employee of the Month';
+  recipientId: string;
+  recipientName: string;
+  recognizedBy: string;
+  recognizedById: string;
+  message: string;
+  date: string;
+}
+
+export interface TrainingMaterial {
+  title: string;
+  type: 'video' | 'pdf' | 'presentation' | 'checklist';
+  url: string;
+}
+
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  answerIndex: number;
+}
+
+export interface TrainingCourse {
+  id: string;
+  title: string;
+  description: string;
+  department: string;
+  materials: TrainingMaterial[];
+  quizzes: QuizQuestion[];
+  assignedEmployees: string[]; // IDs
+  completedBy: {
+    employeeId: string;
+    completionDate: string;
+    score: number;
+  }[];
+  dueDate?: string;
+  createdAt: string;
+}
+
+export interface PollResponse {
+  employeeId: string;
+  answers: string[]; // selected option values or text
+}
+
+export interface Poll {
+  id: string;
+  question: string;
+  options: string[];
+  questionType: 'Single Choice' | 'Multiple Choice' | 'Rating' | 'Text Feedback';
+  expiresAt: string;
+  createdBy: string;
+  responses: PollResponse[];
+  createdAt: string;
+}
+
+export interface HubRBAC {
+  permissions: Record<string, Record<string, 'read' | 'write' | 'manage' | 'none'>>;
+}
+
+export interface AttendanceSession {
+  loginTime: string; // ISO String
+  logoutTime: string | null; // ISO String
+  ipAddress: string;
+  device: string;
+  deviceInfo?: string;
+  lastPingTime?: string; // ISO String tracking browser heartbeat
+}
+
+export interface SystemLog {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string; // YYYY-MM-DD
+  offTime: string; // ISO String
+  reenterTime: string; // ISO String
+  type: 'disruption';
+}
+
+export interface AttendanceEditLog {
+  field: 'loginTime' | 'logoutTime' | 'status' | 'notes';
+  sessionIdx?: number;
+  previousValue: any;
+  updatedValue: any;
+  editedBy: string;
+  editedByName: string;
+  timestamp: string; // ISO String
+}
+
+export interface AttendanceRecord {
+  id: string; // e.g. "employeeId_YYYY-MM-DD"
+  employeeId: string;
+  employeeName: string;
+  date: string; // "YYYY-MM-DD"
+  status: 'Present' | 'Absent' | 'Holiday';
+  sessions: AttendanceSession[];
+  totalWorkedMs: number;
+  lateReason?: string | null;
+  lateMinutes?: number | null;
+  adminNote?: string;
+  editHistory: AttendanceEditLog[];
+  createdAt: string;
+}
+
+export interface Holiday {
+  id: string;
+  date: string; // "YYYY-MM-DD"
+  name: string;
+  description?: string;
+  createdAt?: string;
+}
+
+export interface AttendanceSettings {
+  officialWorkingHours: number; // default: 8
+  officialStartTime: string; // default: "09:00"
+  lateTrackingEnabled: boolean; // default: false
+  lateGracePeriod: number; // default: 15 (minutes)
+  ipRestrictionEnabled: boolean; // default: false
+  approvedIPs: string[]; // array of IPs
+  autoSundayHoliday: boolean; // default: true
+  defaultWorkingDays: string[]; // e.g. ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 }

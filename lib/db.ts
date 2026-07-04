@@ -34,6 +34,62 @@ export const subscribeToCollection = <T>(
     return unsubscribe;
 };
 
+// --- Generic CRUD Operations for Hub ---
+
+export const addDocToDB = async (collectionName: string, data: any) => {
+    try {
+        const docRef = await addDoc(collection(db, collectionName), data);
+        return docRef.id;
+    } catch (e) {
+        console.error(`Error adding to ${collectionName}: `, e);
+        throw e;
+    }
+};
+
+export const updateDocInDB = async (collectionName: string, id: string, updates: any) => {
+    try {
+        const docRef = doc(db, collectionName, id);
+        await updateDoc(docRef, updates);
+    } catch (e) {
+        console.error(`Error updating in ${collectionName}: `, e);
+        throw e;
+    }
+};
+
+export const deleteDocFromDB = async (collectionName: string, id: string) => {
+    try {
+        const docRef = doc(db, collectionName, id);
+        await deleteDoc(docRef);
+    } catch (e) {
+        console.error(`Error deleting from ${collectionName}: `, e);
+        throw e;
+    }
+};
+
+export const getHubRBAC = async (): Promise<any | null> => {
+    try {
+        const docRef = doc(db, 'config', 'internal_hub_rbac');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            return docSnap.data();
+        }
+        return null;
+    } catch (error) {
+        console.error('Error fetching hub RBAC:', error);
+        return null;
+    }
+};
+
+export const saveHubRBAC = async (rbac: any) => {
+    try {
+        const docRef = doc(db, 'config', 'internal_hub_rbac');
+        await setDoc(docRef, rbac);
+    } catch (error) {
+        console.error('Error saving hub RBAC:', error);
+        throw error;
+    }
+};
+
 // --- Projects ---
 
 export const addProjectToDB = async (project: Omit<Project, 'id'>) => {
@@ -802,4 +858,144 @@ export const revertSalesQuotation = async (quotationId: string, newStatus: strin
         console.error("Error reverting sales quotation: ", e);
         throw e;
     }
+};
+
+// --- Attendance & Holiday Settings ---
+
+export const getAttendanceSettings = async (): Promise<any> => {
+  try {
+    const docRef = doc(db, 'config', 'attendance_settings');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return {
+      officialWorkingHours: 8,
+      officialStartTime: '09:00',
+      lateTrackingEnabled: false,
+      lateGracePeriod: 15,
+      ipRestrictionEnabled: false,
+      approvedIPs: [],
+      autoSundayHoliday: true,
+      defaultWorkingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    };
+  } catch (error) {
+    console.error('Error fetching attendance settings:', error);
+    return null;
+  }
+};
+
+export const saveAttendanceSettings = async (settings: any) => {
+  try {
+    const docRef = doc(db, 'config', 'attendance_settings');
+    await setDoc(docRef, settings);
+  } catch (error) {
+    console.error('Error saving attendance settings:', error);
+    throw error;
+  }
+};
+
+export const logEmployeeLoginWithReason = async (
+  employeeId: string,
+  employeeName: string,
+  ipAddress: string,
+  device: string,
+  lateReason?: string | null,
+  lateMinutes?: number | null
+) => {
+  try {
+    const localDate = new Date();
+    const dateYMD = localDate.getFullYear() + '-' + 
+                    String(localDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                    String(localDate.getDate()).padStart(2, '0');
+    const docId = `${employeeId}_${dateYMD}`;
+    const docRef = doc(db, 'attendance', docId);
+    const docSnap = await getDoc(docRef);
+
+    const newSession = {
+      loginTime: new Date().toISOString(),
+      logoutTime: null,
+      ipAddress,
+      device,
+      deviceInfo: navigator.userAgent,
+      lastPingTime: new Date().toISOString()
+    };
+
+    if (!docSnap.exists()) {
+      await setDoc(docRef, {
+        employeeId,
+        employeeName,
+        date: dateYMD,
+        status: 'Present',
+        sessions: [newSession],
+        totalWorkedMs: 0,
+        lateReason: lateReason || null,
+        lateMinutes: lateMinutes || null,
+        adminNote: '',
+        editHistory: [],
+        createdAt: new Date().toISOString()
+      });
+    } else {
+      const currentData = docSnap.data();
+      const updatedSessions = [...(currentData.sessions || []), newSession];
+      const updates: any = {
+        sessions: updatedSessions,
+        status: 'Present'
+      };
+      if (lateReason !== undefined) updates.lateReason = lateReason;
+      if (lateMinutes !== undefined) updates.lateMinutes = lateMinutes;
+      await updateDoc(docRef, updates);
+    }
+  } catch (err) {
+    console.error("Error logging employee login:", err);
+    throw err;
+  }
+};
+
+export const logEmployeeLogout = async (employeeId: string) => {
+  try {
+    const localDate = new Date();
+    const dateYMD = localDate.getFullYear() + '-' + 
+                    String(localDate.getMonth() + 1).padStart(2, '0') + '-' + 
+                    String(localDate.getDate()).padStart(2, '0');
+    
+    // We check today's and yesterday's doc to find if there is an open session.
+    const checkDocs = [
+      `${employeeId}_${dateYMD}`,
+      // Yesterday
+      `${employeeId}_${new Date(localDate.getTime() - 24 * 60 * 60 * 1000).getFullYear()}-${String(new Date(localDate.getTime() - 24 * 60 * 60 * 1000).getMonth() + 1).padStart(2, '0')}-${String(new Date(localDate.getTime() - 24 * 60 * 60 * 1000).getDate()).padStart(2, '0')}`
+    ];
+
+    for (const docId of checkDocs) {
+      const docRef = doc(db, 'attendance', docId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const sessions = data.sessions || [];
+        const openSessionIdx = sessions.findIndex((s: any) => s.logoutTime === null);
+        
+        if (openSessionIdx !== -1) {
+          // Close it!
+          sessions[openSessionIdx].logoutTime = new Date().toISOString();
+          
+          // Recalculate total worked ms
+          let totalWorkedMs = 0;
+          sessions.forEach((s: any) => {
+            if (s.loginTime && s.logoutTime) {
+              totalWorkedMs += new Date(s.logoutTime).getTime() - new Date(s.loginTime).getTime();
+            }
+          });
+          
+          await updateDoc(docRef, {
+            sessions,
+            totalWorkedMs
+          });
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error logging employee logout:", err);
+    throw err;
+  }
 };
