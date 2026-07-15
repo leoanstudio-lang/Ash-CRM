@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Quotation, QuotationItem, Client, CompanyProfile, DynamicField, Service, QuotationDemo, Employee } from '../types';
-import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, User, Phone, Mail, Navigation, FileSignature, Search, Calendar, Filter, ArrowUpRight, CheckCircle2, AlertCircle, PlaySquare, Pencil } from 'lucide-react';
-import { addQuotationToDB, updateQuotationInDB, addClientToDB, getCompanyProfile, subscribeToCollection, deleteQuotationFromDB, addQuotationDemoToDB, updateQuotationDemoInDB, deleteQuotationDemoFromDB } from '../lib/db';
+import { FileText, Plus, Trash2, Download, CheckCircle, Clock, X, Building2, User, Phone, Mail, Navigation, FileSignature, Search, Calendar, Filter, ArrowUpRight, CheckCircle2, AlertCircle, PlaySquare, Pencil, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, List, ListOrdered } from 'lucide-react';
+import { addQuotationToDB, updateQuotationInDB, addClientToDB, getCompanyProfile, subscribeToCollection, deleteQuotationFromDB, addQuotationDemoToDB, updateQuotationDemoInDB, deleteQuotationDemoFromDB, generateProfessionalQuotationId } from '../lib/db';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
@@ -71,6 +71,22 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
     const [items, setItems] = useState<QuotationItem[]>([{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
     const [discount, setDiscount] = useState<number>(0);
     const [terms, setTerms] = useState("1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.");
+    const [projectNotes, setProjectNotes] = useState('');
+
+    const projectNotesRef = useRef<HTMLDivElement>(null);
+
+    const executeProjectNotesCommand = (command: string, value: string = '') => {
+        document.execCommand(command, false, value);
+        if (projectNotesRef.current) {
+            setProjectNotes(projectNotesRef.current.innerHTML);
+        }
+    };
+
+    useEffect(() => {
+        if (projectNotesRef.current && projectNotesRef.current.innerHTML !== projectNotes) {
+            projectNotesRef.current.innerHTML = projectNotes;
+        }
+    }, [projectNotes]);
 
     // Custom HTML Setup
     const [isCustomHtml, setIsCustomHtml] = useState<boolean>(false);
@@ -177,6 +193,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         setItems(q.items && q.items.length > 0 ? [...q.items] : [{ description: '', quantity: 1, unitPrice: 0, total: 0 }]);
         setDiscount(q.discount || 0);
         setTerms(q.termsAndConditions || '');
+        setProjectNotes((q as any).projectNotes || '');
         setIsCustomHtml(!!q.isCustomHtml);
         setCustomHtmlContent(q.customHtmlContent || '');
 
@@ -211,6 +228,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         setTerms("1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.");
         setIsCustomHtml(false);
         setCustomHtmlContent('');
+        setProjectNotes('');
         setIsCreating(false);
         setIsEditing(false);
         setEditingQuotationId(null);
@@ -236,8 +254,8 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             finalSubtotal = finalTotalAmount;
         }
 
-        // Generate strict QTN ID
-        let qNumber = `QT-${generateRandomCode(6)}`;
+        // Generate professional sequential QTN ID
+        let qNumber = await generateProfessionalQuotationId();
         if (isEditing && editingQuotationId) {
             const existing = quotations.find(q => q.id === editingQuotationId);
             if (existing) qNumber = existing.quotationNumber;
@@ -272,6 +290,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             discount: isCustomHtml ? 0 : (discount || 0),
             totalAmount: finalTotalAmount,
             termsAndConditions: isCustomHtml ? '' : terms,
+            projectNotes: isCustomHtml ? '' : projectNotes.trim(),
             status: isEditing ? (quotations.find(q => q.id === editingQuotationId)?.status || 'Draft') : 'Draft',
             createdAt: isEditing ? (quotations.find(q => q.id === editingQuotationId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
             isNewClient: clientType === 'new',
@@ -303,31 +322,8 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             alert("Error saving quotation.");
         }
     };
-
     const handleStatusChange = async (qtn: Quotation, newStatus: Quotation['status']) => {
         try {
-            if (newStatus === 'Approved' && qtn.salesDealId && qtn.salesType) {
-                if (window.confirm("Approve this sales quotation? This will create a Client, auto-route the Project, and close the Sales Deal.")) {
-                    const { approveSalesQuotation } = await import('../lib/db');
-                    await approveSalesQuotation(qtn.id, qtn.salesDealId, qtn.salesType);
-                    alert("Quotation approved! Client created and Project routed successfully.");
-                    return;
-                } else {
-                    return;
-                }
-            }
-
-            if (qtn.status === 'Approved' && newStatus !== 'Approved' && qtn.salesDealBackup) {
-                if (window.confirm("This quotation was previously approved. Changing its status will undo the approval: restoring the sales deal to Sales CRM and deleting the associated Client and Project documents. Proceed?")) {
-                    const { revertSalesQuotation } = await import('../lib/db');
-                    await revertSalesQuotation(qtn.id, newStatus);
-                    alert("Quotation reverted! Sales deal restored and client/project deleted.");
-                    return;
-                } else {
-                    return;
-                }
-            }
-
             await updateQuotationInDB(qtn.id, { status: newStatus });
 
             // Automation hook: If Approved AND was a new client, add to main Client DB
@@ -357,6 +353,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
         switch (status) {
             case 'Draft': return 'bg-slate-100 text-slate-600 hover:bg-slate-200';
             case 'Sent': return 'bg-blue-100 text-blue-700 hover:bg-blue-200';
+            case 'Manager Approved': return 'bg-purple-100 text-purple-700 hover:bg-purple-200';
             case 'Approved': return 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200';
             case 'Rejected': return 'bg-red-100 text-red-700 hover:bg-red-200';
             default: return 'bg-slate-100 text-slate-600';
@@ -689,7 +686,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                     4: { cellWidth: 35, halign: 'right', fontStyle: 'bold', textColor: deepEclipse }
                 },
                 alternateRowStyles: { fillColor: [255, 255, 255] },
-                margin: { left: 14, right: 14, bottom: 40 }, // Prevent overlapping footer
+                margin: { top: 20, left: 14, right: 14, bottom: 40 }, // Prevent overlapping header & continuation overlaps
                 didParseCell: (data) => {
                     if (data.section === 'head' && (data.column.index === 3 || data.column.index === 4)) data.cell.styles.halign = 'right';
                     if (data.section === 'head' && data.column.index === 2) data.cell.styles.halign = 'center';
@@ -757,7 +754,46 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
             doc.text(`Rs. ${q.totalAmount.toLocaleString()}`, rightEdge, totalsY, { align: 'right' });
 
             // ==========================================
-            // 6. TERMS & CONDITIONS
+            // 6. PROJECT NOTES (between totals and terms)
+            // ==========================================
+            const cleanHTMLToPlainText = (html: string) => {
+                if (!html) return '';
+                let text = html;
+                text = text.replace(/<li[^>]*>/gi, '  • ');
+                text = text.replace(/<\/li>/gi, '\n');
+                text = text.replace(/<(p|div|h1|h2|h3|h4|h5|h6)[^>]*>/gi, '');
+                text = text.replace(/<\/(p|div|h1|h2|h3|h4|h5|h6)>/gi, '\n');
+                text = text.replace(/<br\s*\/?>/gi, '\n');
+                text = text.replace(/<[^>]*>/g, '');
+                text = text.replace(/&nbsp;/g, ' ')
+                           .replace(/&amp;/g, '&')
+                           .replace(/&lt;/g, '<')
+                           .replace(/&gt;/g, '>')
+                           .replace(/&quot;/g, '"');
+                return text.trim();
+            };
+
+            const pNotes = cleanHTMLToPlainText(((q as any).projectNotes || '').trim());
+            if (pNotes) {
+                let notesY = totalsY + 15;
+                if (notesY > pageHeight - 60) {
+                    doc.addPage();
+                    notesY = 20;
+                }
+                doc.setFontSize(8);
+                doc.setFont("helvetica", "bold");
+                doc.setTextColor(...deepEclipse);
+                doc.text("PROJECT NOTES", 14, notesY);
+                notesY += 5;
+                doc.setFont("helvetica", "normal");
+                doc.setTextColor(...textMuted);
+                const splitNotes = doc.splitTextToSize(pNotes, 175);
+                doc.text(splitNotes, 14, notesY, { lineHeightFactor: 1.6 });
+                totalsY = notesY + (splitNotes.length * 5.5);
+            }
+
+            // ==========================================
+            // 7. TERMS & CONDITIONS
             // ==========================================
             let termsY = totalsY + 15;
             if (termsY > pageHeight - 50) {
@@ -1115,6 +1151,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                 <option value="All">All Status</option>
                                 <option value="Draft">Draft</option>
                                 <option value="Sent">Sent</option>
+                                <option value="Manager Approved">Manager Approved</option>
                                 <option value="Approved">Approved</option>
                                 <option value="Rejected">Rejected</option>
                             </select>
@@ -1181,7 +1218,14 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                 {filteredQuotations.map(q => (
                                     <tr key={q.id} className="hover:bg-slate-50/80 transition-all duration-300 group">
                                         <td className="px-8 py-5">
-                                            <span className="text-xs font-bold text-slate-700">{q.quotationNumber}</span>
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="text-xs font-bold text-slate-700">{q.quotationNumber}</span>
+                                                {(q as any).isUpdated && (
+                                                    <span className="text-[8px] font-black uppercase tracking-widest text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded animate-pulse">
+                                                        UPDATED
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-8 py-5">
                                             <div className="flex flex-col">
@@ -1212,6 +1256,7 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                                 >
                                                     <option value="Draft">Draft</option>
                                                     <option value="Sent">Sent</option>
+                                                    <option value="Manager Approved">Manager Approved</option>
                                                     <option value="Approved">Approved</option>
                                                     <option value="Rejected">Rejected</option>
                                                 </select>
@@ -1586,6 +1631,109 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                                                 >
                                                     <Plus size={14} /> Add Row
                                                 </button>
+                                            </div>
+
+                                            {/* Project Notes */}
+                                            <div className="flex flex-col mt-4 mb-4">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Project Notes (shown to client in PDF)</label>
+                                                
+                                                {/* Rich Text Editor Container */}
+                                                <div className="flex flex-col border border-slate-200 rounded-xl shadow-sm bg-white overflow-hidden relative mb-2">
+                                                    {/* Toolbar */}
+                                                    <div className="flex items-center gap-1 p-2 bg-slate-50 border-b border-slate-200 shrink-0 flex-wrap">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('bold')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Bold"
+                                                        >
+                                                            <Bold size={12} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('italic')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Italic"
+                                                        >
+                                                            <Italic size={12} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('underline')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Underline"
+                                                        >
+                                                            <Underline size={12} />
+                                                        </button>
+                                                        
+                                                        <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('justifyLeft')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Align Left"
+                                                        >
+                                                            <AlignLeft size={12} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('justifyCenter')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Align Center"
+                                                        >
+                                                            <AlignCenter size={12} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('justifyRight')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Align Right"
+                                                        >
+                                                            <AlignRight size={12} />
+                                                        </button>
+                                                        
+                                                        <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('insertUnorderedList')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Bullet List"
+                                                        >
+                                                            <List size={12} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('insertOrderedList')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-600 rounded transition-colors"
+                                                            title="Numbered List"
+                                                        >
+                                                            <ListOrdered size={12} />
+                                                        </button>
+                                                        
+                                                        <div className="w-px h-4 bg-slate-200 mx-1"></div>
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => executeProjectNotesCommand('removeFormat')}
+                                                            className="p-1.5 hover:bg-slate-200 text-slate-500 rounded transition-colors text-[9px] font-bold"
+                                                            title="Clear Formatting"
+                                                        >
+                                                            Clear
+                                                        </button>
+                                                    </div>
+
+                                                    {/* contentEditable editor */}
+                                                    <div
+                                                        ref={projectNotesRef}
+                                                        contentEditable
+                                                        suppressContentEditableWarning
+                                                        onInput={(e) => setProjectNotes(e.currentTarget.innerHTML)}
+                                                        className="w-full px-3 py-3 bg-white text-xs text-slate-700 font-medium outline-none min-h-[120px] max-h-[250px] overflow-y-auto"
+                                                        style={{ wordBreak: 'break-word' }}
+                                                    />
+                                                </div>
                                             </div>
 
                                             {/* Bottom Info: Terms & Totals Side-by-Side */}

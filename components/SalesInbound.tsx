@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { Lead, Client, Service, Campaign, Channel, Quotation } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Lead, Client, Service, Campaign, Channel, Quotation, CatalogService } from '../types';
 import { Target, Users, Megaphone, Inbox, Search, Filter, Plus, TrendingUp, Calendar, DollarSign, Activity, FileSpreadsheet, Trash2 } from 'lucide-react';
+import { db } from '../lib/firebase';
+import { collection, query, onSnapshot } from 'firebase/firestore';
 import {
   addInboundSourceToDB,
   deleteInboundSourceFromDB,
@@ -36,6 +38,8 @@ interface SalesInboundProps {
   onClearAutoOpen?: () => void;
   departments?: string[]; // Dynamic department list for routing
   quotations?: Quotation[]; // Pass live quotations for stage syncing
+  currentUser?: any;
+  employees?: any[];
 }
 
 type InboundTab = 'overview' | 'sources' | 'leads' | 'nurturing' | 'noResponsePool';
@@ -51,13 +55,35 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
   channels = [],
   autoOpenProspectId, onClearAutoOpen,
   departments = ['Development', 'Graphics Designing', 'Marketing'],
-  quotations = []
+  quotations = [],
+  currentUser,
+  employees = []
 }) => {
   const [activeTab, setActiveTab] = useState<InboundTab>('overview');
   const [showNewCampaignModal, setShowNewCampaignModal] = useState(false);
   const [showManualEntryModal, setShowManualEntryModal] = useState(false);
-  const [manualEntryForm, setManualEntryForm] = useState({ name: '', company: '', phone: '', email: '', whatsapp: '', linkedin: '', notes: '' });
+  const [manualEntryForm, setManualEntryForm] = useState({ name: '', company: '', phone: '', email: '', whatsapp: '', serviceId: '', estimatedValue: '', notes: '' });
   const [selectedProspect, setSelectedProspect] = useState<any | null>(null);
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
+  // Drag & Drop (Kanban)
+  const [draggedDealId, setDraggedDealId] = useState<string | null>(null);
+  const [dragOverStage, setDragOverStage] = useState<string | null>(null);
+  // Closed Won Modal
+  const [showClosedWonModal, setShowClosedWonModal] = useState(false);
+  const [pendingClosedWonDealId, setPendingClosedWonDealId] = useState<string | null>(null);
+  const [closedWonForm, setClosedWonForm] = useState({ actualValue: '', serviceId: '', serviceName: '', department: '', notes: '' });
+
+  useEffect(() => {
+    const q = query(collection(db, 'catalog_services'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: CatalogService[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as CatalogService);
+      });
+      setCatalogServices(list);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Auto-open effect
   React.useEffect(() => {
@@ -114,7 +140,8 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
     endDate: '',
     cost: 0,
     status: 'Active',
-    department: ''
+    department: '',
+    notes: ''
   });
 
   // Flexible CSV Upload States
@@ -203,7 +230,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
     if (manualEntryForm.phone) contactMethods.push({ type: 'phone', value: manualEntryForm.phone });
     if (manualEntryForm.email) contactMethods.push({ type: 'email', value: manualEntryForm.email });
     if (manualEntryForm.whatsapp) contactMethods.push({ type: 'whatsapp', value: manualEntryForm.whatsapp });
-    if (manualEntryForm.linkedin) contactMethods.push({ type: 'linkedin', value: manualEntryForm.linkedin });
 
     if (contactMethods.length === 0 && !manualEntryForm.phone && !manualEntryForm.email) {
       alert("Please provide at least a phone number or email.");
@@ -224,6 +250,10 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
         outboundStatus: 'Not Contacted',
         attemptCount: 0,
         leadScore: 0,
+        assignedEmployeeId: currentUser?.id || '',
+        assignedEmployeeName: currentUser?.name || '',
+        serviceId: manualEntryForm.serviceId || '',
+        value: Number(manualEntryForm.estimatedValue) || 0,
         activities: [{
           id: Date.now().toString() + Math.random().toString(),
           type: 'note',
@@ -243,7 +273,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             email: manualEntryForm.email || '',
             phone: manualEntryForm.phone || manualEntryForm.whatsapp || '',
             company: manualEntryForm.company || '',
-            jobTitle: 'Inbound Lead'
+            notes: manualEntryForm.notes || ''
           });
           console.log('Inbound contact auto-saved to Google Contacts:', manualEntryForm.name);
         } catch (gcErr) {
@@ -254,7 +284,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
         console.warn('No Google token available — contact saved to DB only. Google sync will be retried on next token refresh.');
       }
 
-      setManualEntryForm({ name: '', company: '', phone: '', email: '', whatsapp: '', linkedin: '', notes: '' });
+      setManualEntryForm({ name: '', company: '', phone: '', email: '', whatsapp: '', serviceId: '', estimatedValue: '', notes: '' });
       setShowManualEntryModal(false);
       alert("Prospect added successfully!");
     } catch (error) {
@@ -283,7 +313,8 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
         endDate: '',
         cost: 0,
         status: 'Active',
-        department: ''
+        department: '',
+        notes: ''
       });
       setShowNewCampaignModal(false);
     } catch (error) {
@@ -458,6 +489,8 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
           outboundStatus: 'Not Contacted',
           attemptCount: 0,
           leadScore: 0,
+          assignedEmployeeId: currentUser?.id || '',
+          assignedEmployeeName: currentUser?.name || '',
           activities: [{
             id: Date.now().toString() + Math.random().toString(),
             type: 'note',
@@ -541,6 +574,8 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
         outboundStatus: 'Not Contacted',
         attemptCount: 0,
         leadScore: 0,
+        assignedEmployeeId: prospect.assignedEmployeeId || currentUser?.id || '',
+        assignedEmployeeName: prospect.assignedEmployeeName || currentUser?.name || '',
         activities: [{
           id: Date.now().toString() + Math.random().toString(),
           type: 'note',
@@ -564,16 +599,11 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
   const handleProspectStatusChange = async (prospect: any, newStatus: string) => {
     try {
-      if (newStatus === 'Message Sent') {
+      if (newStatus === 'Called' || newStatus === 'Message Sent' || newStatus === 'Mailed') {
         await updateInboundLeadInDB(prospect.id, {
-          outboundStatus: 'Message Sent',
+          outboundStatus: newStatus as any,
           attemptCount: (prospect.attemptCount || 0) + 1,
           lastContactedDate: new Date().toISOString()
-        });
-      } else if (newStatus === 'Replied') {
-        await updateInboundLeadInDB(prospect.id, {
-          outboundStatus: 'Replied',
-          leadScore: (prospect.leadScore || 0) + 10
         });
       } else if (newStatus === 'Interested') {
         // Move to Active Deals
@@ -587,7 +617,9 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
           stageEnteredAt: new Date().toISOString(),
           leadScore: (prospect.leadScore || 0) + 20,
           createdAt: new Date().toISOString(),
-          activities: prospect.activities || []
+          activities: prospect.activities || [],
+          assignedEmployeeId: prospect.assignedEmployeeId || currentUser?.id || '',
+          assignedEmployeeName: prospect.assignedEmployeeName || currentUser?.name || ''
         });
         await deleteInboundLeadFromDB(prospect.id);
       } else if (newStatus === 'Not Now (Nurture)') {
@@ -622,6 +654,59 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
     } catch (err) {
       console.error("Error updating prospect status:", err);
     }
+  };
+
+  // --- DRAG & DROP HANDLER ---
+  const handleKanbanDrop = async (targetStage: string) => {
+    if (!draggedDealId) return;
+    setDragOverStage(null);
+    const deal = activeDeals.find(d => d.id === draggedDealId);
+    if (!deal || deal.outboundStage === targetStage) { setDraggedDealId(null); return; }
+
+    if (targetStage === 'Closed Won') {
+      openClosedWonModal(draggedDealId, deal);
+      setDraggedDealId(null);
+      return;
+    }
+
+    await updateDeal(draggedDealId, { outboundStage: targetStage as any }, 'stage_move', `Moved to ${targetStage} via drag & drop.`);
+    setDraggedDealId(null);
+  };
+
+  // --- OPEN CLOSED WON MODAL ---
+  const openClosedWonModal = (dealId: string, deal: any) => {
+    setPendingClosedWonDealId(dealId);
+    setClosedWonForm({
+      actualValue: deal.value ? String(deal.value) : '',
+      serviceId: '',
+      serviceName: '',
+      department: departments[0] || 'Marketing',
+      notes: ''
+    });
+    setShowClosedWonModal(true);
+  };
+
+  // --- CONFIRM CLOSED WON ---
+  const handleConfirmClosedWon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingClosedWonDealId) return;
+    const { actualValue, serviceId, serviceName, department, notes } = closedWonForm;
+
+    const updates: Partial<Lead> & { serviceId?: string, serviceName?: string, department?: string, notes?: string } = {
+      outboundStage: 'Closed Won',
+      value: actualValue ? Number(actualValue) : undefined,
+      serviceId: serviceId || undefined,
+      serviceName: serviceName || undefined,
+      department: department || undefined,
+      notes: notes || undefined
+    };
+
+    const desc = `Deal Closed Won.${serviceName ? ' Service: ' + serviceName : ''}${department ? ' Department: ' + department : ''}${notes ? ' Notes: ' + notes : ''}`;
+    await updateDeal(pendingClosedWonDealId, updates, 'stage_move', desc);
+
+    setShowClosedWonModal(false);
+    setPendingClosedWonDealId(null);
+    setClosedWonForm({ actualValue: '', serviceId: '', serviceName: '', department: '', notes: '' });
   };
 
   // --- AUTOMATION RULES & UPDATE LOGIC (FOR ACTIVE DEALS) ---
@@ -668,25 +753,19 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
         try {
           const existingQ = (quotations || []).find((q: any) => q.salesDealId === dealId && q.status !== 'Approved');
           if (!existingQ) {
-            const { addQuotationToDB } = await import('../lib/db');
+            const { addQuotationToDB, generateProfessionalQuotationId } = await import('../lib/db');
             const campaignName = campaigns.find((c: any) => c.id === deal.campaignId)?.name || '';
+            const proQId = await generateProfessionalQuotationId();
             await addQuotationToDB({
-              quotationNumber: `QT-${Math.floor(100000 + Math.random() * 900000)}`,
+              quotationNumber: proQId,
               issueDate: new Date().toISOString().split('T')[0],
               validityDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
               clientName: deal.contactName || deal.name || 'Unknown',
               clientEmail: deal.email || '',
               clientPhone: deal.mobile || '',
-              items: [
-                {
-                  description: `Project Service: ${deal.companyName || deal.projectName || 'General Service'}`,
-                  quantity: 1,
-                  unitPrice: deal.value || 0,
-                  total: deal.value || 0
-                }
-              ],
-              subtotal: deal.value || 0,
-              totalAmount: deal.value || 0,
+              items: [],
+              subtotal: 0,
+              totalAmount: 0,
               termsAndConditions: "1. 50% Advance payment required to commence work.\n2. Quotation is valid for 30 days.\n3. Final deliverables securely handed over upon receipt of balance payment.\n4. Revisions beyond scope will be billed additionally.",
               status: 'Draft',
               createdAt: new Date().toISOString(),
@@ -760,6 +839,55 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
       // --- AUTO-SYNC TO GOOGLE CONTACTS + CLIENT DB ON WON (soft-blocks on Google sync failures, but proceed to Client DB) ---
       if (updates.outboundStage === ('Closed Won' as any)) {
+        // Fetch current settings
+        let minimumTarget = 30000;
+        let outboundRatio = 0.06;
+        let inboundRatio = 0.03;
+        try {
+          const { getDoc, doc } = await import('firebase/firestore');
+          const docSnap = await getDoc(doc(db, 'config', 'incentive_settings'));
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            minimumTarget = Number(data.minimumTarget) ?? 30000;
+            outboundRatio = Number(data.outboundRatio) ?? 0.06;
+            inboundRatio = Number(data.inboundRatio) ?? 0.03;
+          }
+        } catch (err) {
+          console.warn('Failed to fetch settings, using defaults:', err);
+        }
+
+        const repId = deal.assignedEmployeeId || currentUser?.id || '';
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // Filter this month's closed won deals for this rep
+        const outboundClosed = (leads || [])
+          .filter(d => d.assignedEmployeeId === repId && d.outboundStage === 'Closed Won')
+          .map(d => ({ id: d.id, val: Number(d.value) || 0, isOutbound: true, ref: 'activeDeals', d }));
+
+        const inboundClosed = (activeDeals || [])
+          .filter(d => d.assignedEmployeeId === repId && d.outboundStage === 'Closed Won')
+          .map(d => ({ id: d.id, val: Number(d.value) || 0, isOutbound: false, ref: 'inboundActiveDeals', d }));
+
+        const thisMonthDeals = [...outboundClosed, ...inboundClosed].filter(d => {
+          const closedDate = new Date(d.d.closedAt || d.d.stageEnteredAt || d.d.createdAt);
+          return closedDate >= currentMonthStart;
+        });
+
+        const newDealValue = updates.value || deal.value || 0;
+        const totalSalesValue = thisMonthDeals.reduce((sum, d) => sum + d.val, 0) + newDealValue;
+        const targetMet = totalSalesValue >= minimumTarget;
+
+        let currentDealCommission = 0;
+        if (targetMet) {
+          currentDealCommission = Math.round(newDealValue * inboundRatio); // Inbound ratio here
+        }
+
+        updates.incentiveAmount = currentDealCommission;
+        updates.incentiveStatus = 'Unpaid';
+        updates.closedAt = new Date().toISOString();
+        updates.stageEnteredAt = new Date().toISOString();
+
         newActivity.description += " (Auto-saving to Google Contacts & Client DB)";
 
         let resourceName = '';
@@ -796,7 +924,10 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
           // --- AUTO-ROUTE TO DEPARTMENT ---
           const sourceCampaign = campaigns.find((c: any) => c.id === deal.campaignId);
-          const targetDept = sourceCampaign?.department;
+          // Prefer department/service from the Closed Won modal (updates), fall back to campaign department
+          const targetDept = (updates as any).department || sourceCampaign?.department;
+          const targetServiceName = (updates as any).serviceName || targetDept || '';
+          const totalAmount = (updates as any).value || deal.value || 0;
           if (targetDept) {
             try {
               const { addProjectToDB } = await import('../lib/db');
@@ -806,17 +937,17 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
               await addProjectToDB({
                 clientId: (newClient as any)?.id || '',
                 clientName: deal.contactName || deal.name || 'Unknown',
-                serviceId: 'SALES_ROUTED',
-                serviceName: targetDept,
+                serviceId: (updates as any).serviceId || 'SALES_ROUTED',
+                serviceName: targetServiceName,
                 type: targetDept === 'Development' ? 'Web'
                   : targetDept === 'Graphics Designing' ? 'Graphic'
                   : 'Marketing',
                 priority: 'Medium',
                 startDate: today.toISOString().split('T')[0],
                 deadline: defaultDeadline.toISOString().split('T')[0],
-                totalAmount: deal.value || 0,
+                totalAmount,
                 advance: 0,
-                description: `Auto-routed from Inbound campaign: ${sourceCampaign?.name || ''}. ${deal.notes || ''}`.trim(),
+                description: `Auto-routed from Inbound campaign: ${sourceCampaign?.name || ''}.${(updates as any).notes ? ' Notes: ' + (updates as any).notes : ''}`.trim(),
                 status: 'Pending',
                 progress: 0,
                 createdAt: new Date().toISOString()
@@ -841,13 +972,39 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
           }
           // --- END AUTO-APPROVE ---
 
-          // Delete from wherever it was
-          if (sourceCollection === 'active') await deleteInboundDealFromDB(dealId);
-          else if (sourceCollection === 'nurturing') await deleteInboundNurturedLeadFromDB(dealId);
-          else if (sourceCollection === 'silent') await deleteInboundSilentLeadFromDB(dealId);
+          const finalUpdates = {
+            ...updates,
+            leadScore: newScore,
+            activities: [newActivity, ...(deal.activities || [])]
+          };
+
+          // Save Closed Won state to the database instead of deleting
+          if (sourceCollection === 'active') {
+            await updateInboundDealInDB(dealId, finalUpdates);
+          } else {
+            await addInboundDealToDB({ ...deal, ...finalUpdates });
+            if (sourceCollection === 'nurturing') await deleteInboundNurturedLeadFromDB(dealId);
+            else if (sourceCollection === 'silent') await deleteInboundSilentLeadFromDB(dealId);
+          }
+
+          // Retroactively update other deals closed this month if target met
+          if (targetMet) {
+            try {
+              const { updateDoc, doc } = await import('firebase/firestore');
+              for (const d of thisMonthDeals) {
+                if (!d.d.incentiveAmount || d.d.incentiveAmount === 0) {
+                  const ratio = d.isOutbound ? outboundRatio : inboundRatio;
+                  const comm = Math.round(d.val * ratio);
+                  await updateDoc(doc(db, d.ref, d.id), { incentiveAmount: comm });
+                }
+              }
+            } catch (retroErr) {
+              console.error('Failed retroactive update:', retroErr);
+            }
+          }
 
           setSelectedProspect(null);
-          console.log("Inbound Deal successfully converted to Client and removed from pipeline.");
+          console.log("Inbound Deal successfully converted to Client and saved as Closed Won in database.");
           return;
         } catch (dbErr) {
           console.error('Failed to create client in DB:', dbErr);
@@ -1036,6 +1193,52 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                         {selectedProspect.value ? `₹${selectedProspect.value.toLocaleString()}` : 'Not Set'}
                       </p>
                     </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Assigned Representative</p>
+                      {(!currentUser || currentUser.role === 'admin' || currentUser.role === 'super_admin') ? (
+                        <select
+                          value={selectedProspect.assignedEmployeeId || ''}
+                          onChange={async (e) => {
+                            const empId = e.target.value;
+                            const empName = employees.find(emp => emp.id === empId)?.name || '';
+                            const updates = { assignedEmployeeId: empId, assignedEmployeeName: empName };
+                            
+                            try {
+                              // Determine which collection and update database
+                              if (activeDeals.some(d => d.id === selectedProspect.id)) {
+                                await updateInboundDealInDB(selectedProspect.id, updates);
+                              } else if (nurturingLeads.some(l => l.id === selectedProspect.id)) {
+                                await updateInboundNurturedLeadInDB(selectedProspect.id, updates);
+                              } else if (noResponseLeads.some(l => l.id === selectedProspect.id)) {
+                                await updateInboundSilentLeadInDB(selectedProspect.id, updates);
+                              } else {
+                                await updateInboundLeadInDB(selectedProspect.id, updates);
+                              }
+                              
+                              // Update local state
+                              setSelectedProspect(prev => ({ ...prev, ...updates }));
+                              alert(`Lead successfully assigned to ${empName || 'Unassigned'}`);
+                            } catch (err) {
+                              console.error("Failed to update lead assignment:", err);
+                              alert("Failed to update lead assignment.");
+                            }
+                          }}
+                          className="w-full mt-1 p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                        >
+                          <option value="">— Unassigned —</option>
+                          {employees
+                            .filter(e => e.role === 'employee' && e.department?.toLowerCase().includes('sales'))
+                            .map(e => (
+                              <option key={e.id} value={e.id}>{e.name}</option>
+                            ))
+                          }
+                        </select>
+                      ) : (
+                        <p className="font-bold text-sm text-slate-700 mt-1">
+                          {selectedProspect.assignedEmployeeName || 'Unassigned'}
+                        </p>
+                      )}
+                    </div>
                     {selectedProspect.categoryBadge && (
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Category</p>
@@ -1187,10 +1390,15 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                       if (Object.keys(updates).length > 0 || note.trim()) {
                         const actionType = stage !== selectedProspect.outboundStage ? 'stage_move' : 'note';
                         const desc = note.trim() || (stage === 'Nurturing' ? `Moved to Nurturing: ${panelNurtureReason}` : stage === 'Closed Lost' ? 'Deal marked as Closed Lost.' : 'Details updated via control panel.');
-                        updateDeal(selectedProspect.id, updates, actionType, desc);
-                        (form.elements.namedItem('logNote') as HTMLTextAreaElement).value = '';
-                        if (stage !== 'Nurturing' && stage !== 'Closed Lost') {
-                          setSelectedProspect({ ...selectedProspect, ...updates });
+                        
+                        if (stage === 'Closed Won') {
+                          openClosedWonModal(selectedProspect.id, selectedProspect);
+                        } else {
+                          updateDeal(selectedProspect.id, updates, actionType, desc);
+                          (form.elements.namedItem('logNote') as HTMLTextAreaElement).value = '';
+                          if (stage !== 'Nurturing' && stage !== 'Closed Lost') {
+                            setSelectedProspect({ ...selectedProspect, ...updates });
+                          }
                         }
                       }
                     }}>
@@ -1484,19 +1692,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                         value={newCampaign.name} onChange={e => setNewCampaign({ ...newCampaign, name: e.target.value })} required placeholder="e.g. Q1 UAE SEO Push" />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Target Region</label>
-                      <input type="text" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                        value={newCampaign.targetRegion} onChange={e => setNewCampaign({ ...newCampaign, targetRegion: e.target.value })} required placeholder="e.g. Dubai, UAE" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Promoted Service</label>
-                      <select className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
-                        value={newCampaign.serviceId} onChange={e => setNewCampaign({ ...newCampaign, serviceId: e.target.value })} required>
-                        <option value="">Select Service</option>
-                        {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Outreach Channel</label>
                       <select className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
                         value={newCampaign.channel} onChange={e => setNewCampaign({ ...newCampaign, channel: e.target.value })} required>
@@ -1514,15 +1709,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                       <input type="date" className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
                         value={newCampaign.endDate} onChange={e => setNewCampaign({ ...newCampaign, endDate: e.target.value })} required />
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Campaign Budget / Cost (₹)</label>
-                      <div className="relative">
-                        <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input type="number" min="0" className="w-full p-3 pl-8 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all"
-                          value={newCampaign.cost} onChange={e => setNewCampaign({ ...newCampaign, cost: Number(e.target.value) })} required />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 md:col-span-2">
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Target Department</label>
                       <select
                         className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
@@ -1535,6 +1722,15 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                         ))}
                       </select>
                       <p className="text-[9px] text-slate-400 font-medium ml-1">When a deal is Closed Won, the client will be auto-routed to this department.</p>
+                    </div>
+                    <div className="space-y-1.5 md:col-span-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Notes / Campaign Details</label>
+                      <textarea
+                        className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all min-h-[80px]"
+                        value={newCampaign.notes || ''}
+                        onChange={e => setNewCampaign({ ...newCampaign, notes: e.target.value })}
+                        placeholder="Add details about target audience, promotion details, or notes..."
+                      />
                     </div>
                   </div>
 
@@ -1588,9 +1784,32 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                     <input type="tel" value={manualEntryForm.whatsapp} onChange={e => setManualEntryForm({ ...manualEntryForm, whatsapp: e.target.value })} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold" placeholder="e.g. +91..." />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">LinkedIn ID</label>
-                    <input type="text" value={manualEntryForm.linkedin} onChange={e => setManualEntryForm({ ...manualEntryForm, linkedin: e.target.value })} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold" placeholder="e.g. jane-doe" />
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Estimated Value (₹)</label>
+                    <input type="number" value={manualEntryForm.estimatedValue} onChange={e => setManualEntryForm({ ...manualEntryForm, estimatedValue: e.target.value })} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold" placeholder="e.g. 50000" />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Service List</label>
+                  <select
+                    value={manualEntryForm.serviceId}
+                    onChange={e => {
+                      const sId = e.target.value;
+                      const selectedService = catalogServices.find(s => s.id === sId);
+                      setManualEntryForm({
+                        ...manualEntryForm,
+                        serviceId: sId,
+                        estimatedValue: selectedService && selectedService.price ? selectedService.price.toString() : manualEntryForm.estimatedValue
+                      });
+                    }}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold cursor-pointer"
+                  >
+                    <option value="">Select Service</option>
+                    {catalogServices.map(s => (
+                      <option key={s.id} value={s.id}>
+                        [{s.category}] {s.name} {s.price ? `(₹${s.price.toLocaleString()})` : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Initial Notes</label>
@@ -1799,14 +2018,11 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                           return {
                             Campaign: c.name,
                             Channel: c.channel,
-                            Region: c.targetRegion,
                             Status: c.status,
                             Prospects: totalCampProspects,
                             'Interested': interested,
                             'Converted': converted,
-                            Cost: c.cost,
-                            Revenue: revenue,
-                            'ROI %': c.cost > 0 ? (((revenue - c.cost) / c.cost) * 100).toFixed(1) : 0
+                            Revenue: revenue
                           };
                         }),
                         'campaigns_performance'
@@ -1842,11 +2058,9 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-100">
                             <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Campaign</th>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Channel / Region</th>
+                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Channel</th>
                             <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Prospects</th>
                             <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Conversions</th>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Cost / Revenue</th>
-                            <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">ROI %</th>
                             <th className="px-6 py-4 w-12 text-center text-[10px] font-black uppercase tracking-widest text-slate-400">Actions</th>
                           </tr>
                         </thead>
@@ -1861,10 +2075,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                             const totalCampProspects = campProps.length + campDeals.length + campNurturing.length + campNoResp.length + campSuppr.length;
                             const interested = campDeals.length;
                             const converted = campDeals.filter(l => l.outboundStage === 'Closed Won').length;
-                            const revenue = campDeals.filter(l => l.outboundStage === 'Closed Won').reduce((sum, l) => sum + (l.value || 0), 0);
-
-                            const cost = Number(c.cost) || 0;
-                            const roi = cost > 0 ? ((revenue - cost) / cost) * 100 : 0;
 
                             return (
                               <tr key={c.id || Math.random().toString()} onClick={() => setActiveCampaignId(c.id)} className="hover:bg-slate-50/50 transition-colors cursor-pointer group">
@@ -1879,10 +2089,9 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                 </td>
                                 <td className="px-6 py-4">
                                   <p className="font-bold text-xs text-slate-600 flex items-center gap-1.5">
-                                    {c.channel === 'Email' ? '📧' : c.channel === 'WhatsApp' ? '💬' : c.channel === 'LinkedIn' ? '💼' : '📱'}
-                                    {c.channel || 'Email'}
+                                    {c.channel === 'Phone' ? '📞' : c.channel === 'Mail' ? '✉️' : c.channel === 'Email' ? '📧' : c.channel === 'WhatsApp' ? '💬' : '📞'}
+                                    {c.channel || 'Phone'}
                                   </p>
-                                  <p className="text-[10px] font-medium text-slate-400 mt-0.5">{c.targetRegion || 'No Region'}</p>
                                 </td>
                                 <td className="px-6 py-4">
                                   <div className="flex items-center gap-3">
@@ -1901,18 +2110,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                   <p className="font-black text-emerald-600">{converted}</p>
                                   <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Won</p>
                                 </td>
-                                <td className="px-6 py-4">
-                                  <p className="text-xs font-bold text-slate-500 line-through decoration-red-400">₹{cost.toLocaleString()}</p>
-                                  <p className="text-sm font-black text-emerald-600">₹{revenue.toLocaleString()}</p>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <span className={`inline-flex px-3 py-1 rounded-xl text-xs font-black ${roi > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                                    roi < 0 ? 'bg-red-50 text-red-700 border border-red-200' :
-                                      'bg-slate-100 text-slate-600 border border-slate-200'
-                                    }`}>
-                                    {roi > 0 ? '+' : ''}{roi.toFixed(1)}%
-                                  </span>
-                                </td>
+
                                 <td className="px-6 py-4">
                                   <div className="flex justify-end">
                                     <button
@@ -1946,7 +2144,12 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                       </button>
                       <div>
                         <h2 className="text-xl font-black text-slate-800 tracking-tight mb-1">{activeCamp.name}</h2>
-                        <p className="text-xs text-slate-500 font-medium">Campaign Configuration & Prospect Uploads</p>
+                        <p className="text-xs text-slate-500 font-medium mb-1">Campaign Configuration & Prospect Uploads</p>
+                        {activeCamp.notes && (
+                          <p className="text-[10px] text-slate-400 font-semibold italic max-w-md bg-slate-50 border border-slate-100 p-2 rounded-xl mt-1">
+                            Notes: {activeCamp.notes}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-3">
@@ -2018,7 +2221,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Name / Contact</th>
                                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Company</th>
                                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Badges</th>
-                                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Attempts</th>
                                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Update Action</th>
                                 </tr>
                               </thead>
@@ -2069,11 +2271,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                           )}
                                         </div>
                                       </td>
-                                      <td className="px-6 py-4 text-center">
-                                        <span className="font-black text-indigo-600 border border-indigo-200 bg-indigo-50 w-8 h-8 rounded-full inline-flex items-center justify-center">
-                                          {p.attemptCount || 0}
-                                        </span>
-                                      </td>
                                       <td className="px-6 py-4">
                                         <select
                                           className="w-full max-w-[200px] px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all cursor-pointer"
@@ -2081,8 +2278,9 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                           onChange={(e) => handleProspectStatusChange(p, e.target.value)}
                                         >
                                           <option value="Not Contacted">Not Contacted</option>
-                                          <option value="Message Sent">Message Sent / Follow Up</option>
-                                          <option value="Replied">Replied (Engaging)</option>
+                                          <option value="Called">Called</option>
+                                          <option value="Message Sent">Message Sent</option>
+                                          <option value="Mailed">Mailed</option>
                                           <optgroup label="Pipeline Actions">
                                             <option value="Interested">Move to Active Deals</option>
                                             <option value="Not Now (Nurture)">Move to Nurturing</option>
@@ -2218,23 +2416,51 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                 {/* Kanban Board */}
                 <div className="flex gap-4 overflow-x-auto pb-6 -mx-2 px-2 snap-x">
                   {stages.map(stage => {
+                    const isClosedWon = stage === 'Closed Won';
                     const columnProspects = activeDealsList.filter(p => p.outboundStage === stage);
+                    const isDragTarget = dragOverStage === stage;
 
                     return (
-                      <div key={stage} className="flex-none w-80 bg-slate-50/50 rounded-3xl border border-slate-200/60 flex flex-col snap-start h-[calc(100vh-300px)]">
-                        <div className="p-4 border-b border-slate-200/60 flex items-center justify-between bg-white/50 backdrop-blur-sm rounded-t-3xl sticky top-0">
-                          <h3 className="font-black text-sm text-slate-700">{stage}</h3>
-                          <span className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[10px] font-black">{columnProspects.length}</span>
+                      <div
+                        key={stage}
+                        className={`flex-none w-80 rounded-3xl border flex flex-col snap-start h-[calc(100vh-300px)] transition-all duration-200 ${
+                          isDragTarget
+                            ? isClosedWon
+                              ? 'bg-emerald-50/80 border-emerald-400 shadow-lg shadow-emerald-500/10'
+                              : 'bg-indigo-50/80 border-indigo-400 shadow-lg shadow-indigo-500/10'
+                            : isClosedWon
+                              ? 'bg-emerald-50/30 border-emerald-200/60'
+                              : 'bg-slate-50/50 border-slate-200/60'
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setDragOverStage(stage); }}
+                        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverStage(null); }}
+                        onDrop={() => handleKanbanDrop(stage)}
+                      >
+                        <div className={`p-4 border-b flex items-center justify-between backdrop-blur-sm rounded-t-3xl sticky top-0 ${
+                          isClosedWon ? 'bg-emerald-50/80 border-emerald-200/60' : 'bg-white/50 border-slate-200/60'
+                        }`}>
+                          <h3 className={`font-black text-sm ${isClosedWon ? 'text-emerald-700' : 'text-slate-700'}`}>
+                            {isClosedWon ? '🏆 ' : ''}{stage}
+                          </h3>
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${
+                            isClosedWon ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-50 text-indigo-600'
+                          }`}>{columnProspects.length}</span>
                         </div>
                         <div className="flex-1 p-3 overflow-y-auto space-y-3 custom-scrollbar">
                           {columnProspects.map(prospect => {
                             const campaign = campaigns.find(c => c.id === prospect.campaignId);
+                            const isDragging = draggedDealId === prospect.id;
 
                             return (
                               <div
                                 key={prospect.id}
+                                draggable
+                                onDragStart={() => setDraggedDealId(prospect.id)}
+                                onDragEnd={() => { setDraggedDealId(null); setDragOverStage(null); }}
                                 onClick={() => setSelectedProspect(prospect)}
-                                className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-300/50 transition-all cursor-pointer group"
+                                className={`bg-white p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all cursor-grab active:cursor-grabbing group select-none ${
+                                  isDragging ? 'opacity-40 scale-95' : 'hover:border-indigo-300/50'
+                                }`}
                               >
                                 <div className="flex items-start justify-between mb-2">
                                   <div>
@@ -2256,12 +2482,24 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                     {prospect.value ? `₹${prospect.value.toLocaleString()}` : '--'}
                                   </span>
                                 </div>
+                                {prospect.outboundStage === 'Quotation' && prospect.quotationClientApproved && (
+                                  <div className="mt-2 flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                                    <span className="text-emerald-600 font-black text-[10px]">✅</span>
+                                    <span className="text-[9px] font-black text-emerald-700 uppercase tracking-widest">Quotation Approved</span>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
                           {columnProspects.length === 0 && (
-                            <div className="h-24 flex items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl">
-                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Empty</p>
+                            <div className={`h-24 flex items-center justify-center border-2 border-dashed rounded-2xl transition-all ${
+                              isDragTarget
+                                ? isClosedWon ? 'border-emerald-400 bg-emerald-50' : 'border-indigo-400 bg-indigo-50'
+                                : 'border-slate-200'
+                            }`}>
+                              <p className={`text-[10px] font-black uppercase tracking-widest ${isDragTarget ? (isClosedWon ? 'text-emerald-500' : 'text-indigo-500') : 'text-slate-400'}`}>
+                                {isDragTarget ? 'Drop here' : 'Empty'}
+                              </p>
                             </div>
                           )}
                         </div>
@@ -2496,7 +2734,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                           <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Prospect</th>
                           <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Contact Info</th>
                           <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Source Campaign</th>
-                          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Attempts</th>
                           <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-center">Delete</th>
                         </tr>
                       </thead>
@@ -2516,7 +2753,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                           });
                           return filtered.length === 0 ? (
                             <tr>
-                              <td colSpan={5} className="py-12 text-center text-slate-400 text-xs font-medium">No prospects match your filters.</td>
+                              <td colSpan={4} className="py-12 text-center text-slate-400 text-xs font-medium">No prospects match your filters.</td>
                             </tr>
                           ) : filtered.map(l => (
                             <tr key={l.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedProspect(l)}>
@@ -2533,17 +2770,6 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                                   <Megaphone size={10} className="text-slate-400" />
                                   {campaigns.find(c => c.id === l.campaignId)?.name || '--'}
                                 </span>
-                              </td>
-                              <td className="px-6 py-4 text-center">
-                                {l.lostLead ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
-                                    ❌ Lost Lead
-                                  </span>
-                                ) : (
-                                  <span className="font-black text-indigo-600 border border-indigo-200 bg-indigo-50 w-8 h-8 rounded-full inline-flex items-center justify-center">
-                                    {l.attemptCount || 0}
-                                  </span>
-                                )}
                               </td>
                               <td className="px-6 py-4 text-center">
                                 <button
@@ -2576,6 +2802,112 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             );
           })()
         }
+
+        {/* Closed Won Modal */}
+        {showClosedWonModal && (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[70]" onClick={() => { setShowClosedWonModal(false); setPendingClosedWonDealId(null); }}>
+            <div className="bg-white rounded-[2rem] w-full max-w-lg shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className="px-8 py-6 bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-100 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 bg-emerald-500 text-white rounded-2xl flex items-center justify-center text-xl shadow-lg shadow-emerald-500/30">🏆</div>
+                  <div>
+                    <h3 className="font-black text-slate-800 text-lg tracking-tight">Close This Deal</h3>
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Confirm deal details before closing</p>
+                  </div>
+                </div>
+                <button onClick={() => { setShowClosedWonModal(false); setPendingClosedWonDealId(null); }} className="text-slate-400 hover:text-slate-600 p-2 rounded-xl hover:bg-slate-100 transition-all">✕</button>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleConfirmClosedWon} className="p-7 space-y-5">
+                {/* Actual Closed Value */}
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Actual Closed Value (₹) <span className="text-red-400">*</span></label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm">₹</span>
+                    <input
+                      type="number"
+                      required
+                      min="0"
+                      className="w-full pl-7 pr-4 p-3 border border-slate-200 rounded-xl bg-slate-50 font-black text-base text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400 transition-all"
+                      placeholder="e.g. 50000"
+                      value={closedWonForm.actualValue}
+                      onChange={e => setClosedWonForm({ ...closedWonForm, actualValue: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Service Selection */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Service</label>
+                    <select
+                      className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400 transition-all cursor-pointer"
+                      value={closedWonForm.serviceName}
+                      onChange={e => {
+                        const sel = catalogServices.find(s => s.name === e.target.value);
+                        setClosedWonForm({ 
+                          ...closedWonForm, 
+                          serviceName: e.target.value, 
+                          serviceId: sel?.id || '',
+                          actualValue: sel?.price ? String(sel.price) : closedWonForm.actualValue,
+                          department: sel?.category || closedWonForm.department
+                        });
+                      }}
+                    >
+                      <option value="">-- Select Service --</option>
+                      {catalogServices.map(s => <option key={s.id} value={s.name}>{s.name} (₹{(s.price || 0).toLocaleString()})</option>)}
+                    </select>
+                  </div>
+
+                  {/* Department Selection */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Route to Department <span className="text-red-400">*</span></label>
+                    <select
+                      required
+                      className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400 transition-all cursor-pointer"
+                      value={closedWonForm.department}
+                      onChange={e => setClosedWonForm({ ...closedWonForm, department: e.target.value })}
+                    >
+                      <option value="">-- Select Department --</option>
+                      {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Notes / Remarks</label>
+                  <textarea
+                    rows={3}
+                    className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-400 transition-all resize-none"
+                    placeholder="Any final notes about this deal..."
+                    value={closedWonForm.notes}
+                    onChange={e => setClosedWonForm({ ...closedWonForm, notes: e.target.value })}
+                  />
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-3 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => { setShowClosedWonModal(false); setPendingClosedWonDealId(null); }}
+                    className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-200 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-[2] py-3 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20"
+                  >
+                    🏆 Confirm Won
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
       </div >
     </div >

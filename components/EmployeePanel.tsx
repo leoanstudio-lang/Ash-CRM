@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo, MarketingServiceAllocation, MarketingReportEntry, ProjectNote } from '../types';
+import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo, MarketingServiceAllocation, MarketingReportEntry, ProjectNote, Lead, Service, Campaign, Channel, Quotation } from '../types';
 import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare, ArrowLeft, Layers, FileText, Download, Save, Trash2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Building2 } from 'lucide-react';
 import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB, updateManualTaskInDB, updateQuotationDemoInDB } from '../lib/db';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
@@ -9,6 +9,8 @@ import jsPDF from 'jspdf';
 import GoogleDocsWorkspace from './GoogleDocsWorkspace';
 import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 import InternalHub from './InternalHub';
+import SalesCRM from './SalesCRM';
+import SalesQuotationBoard from './SalesQuotationBoard';
 
 type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working' | 'demos' | 'internal_hub';
 
@@ -24,6 +26,26 @@ interface EmployeePanelProps {
   announcements?: any[];
   courses?: any[];
   issues?: any[];
+  // Sales CRM Props
+  leads?: Lead[];
+  setLeads?: React.Dispatch<React.SetStateAction<Lead[]>>;
+  setClients?: React.Dispatch<React.SetStateAction<Client[]>>;
+  services?: Service[];
+  campaigns?: Campaign[];
+  campaignProspects?: any[];
+  campaignSequences?: any[];
+  activeDeals?: any[];
+  nurturingLeads?: any[];
+  noResponseLeads?: any[];
+  suppressedLeads?: any[];
+  channels?: Channel[];
+  inboundSources?: any[];
+  inboundLeads?: any[];
+  inboundActiveDeals?: any[];
+  inboundNurturing?: any[];
+  inboundNoResponseLeads?: any[];
+  inboundSuppressedLeads?: any[];
+  quotations?: Quotation[];
 }
 
 const EmployeePanel: React.FC<EmployeePanelProps> = ({ 
@@ -36,9 +58,31 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({
   employees = [], 
   announcements = [], 
   courses = [], 
-  issues = [] 
+  issues = [],
+  leads = [],
+  setLeads,
+  setClients,
+  services = [],
+  campaigns = [],
+  campaignProspects = [],
+  campaignSequences = [],
+  activeDeals = [],
+  nurturingLeads = [],
+  noResponseLeads = [],
+  suppressedLeads = [],
+  channels = [],
+  inboundSources = [],
+  inboundLeads = [],
+  inboundActiveDeals = [],
+  inboundNurturing = [],
+  inboundNoResponseLeads = [],
+  inboundSuppressedLeads = [],
+  quotations = []
 }) => {
-  if (employee.department === 'Marketing') {
+  const isMarketing = employee.department === 'Marketing' || employee.department === 'Digital Marketing';
+  const isGraphic = employee.department === 'Graphic' || employee.department === 'Graphic Designing' || employee.department === 'Graphics Designing';
+
+  if (isMarketing) {
     return (
       <MarketingEmployeePanel 
         employee={employee} 
@@ -49,6 +93,38 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({
         announcements={announcements} 
         courses={courses} 
         issues={issues} 
+      />
+    );
+  }
+
+  if (!isGraphic) {
+    return (
+      <GenericEmployeePanel
+        employee={employee}
+        onLogout={onLogout}
+        employees={employees}
+        announcements={announcements}
+        courses={courses}
+        issues={issues}
+        leads={leads}
+        setLeads={setLeads}
+        setClients={setClients}
+        services={services}
+        campaigns={campaigns}
+        campaignProspects={campaignProspects}
+        campaignSequences={campaignSequences}
+        activeDeals={activeDeals}
+        nurturingLeads={nurturingLeads}
+        noResponseLeads={noResponseLeads}
+        suppressedLeads={suppressedLeads}
+        channels={channels}
+        inboundSources={inboundSources}
+        inboundLeads={inboundLeads}
+        inboundActiveDeals={inboundActiveDeals}
+        inboundNurturing={inboundNurturing}
+        inboundNoResponseLeads={inboundNoResponseLeads}
+        inboundSuppressedLeads={inboundSuppressedLeads}
+        quotations={quotations}
       />
     );
   }
@@ -1847,3 +1923,268 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({
 };
 
 export default EmployeePanel;
+
+interface GenericEmployeePanelProps {
+  employee: Employee;
+  onLogout: () => void;
+  employees?: Employee[];
+  announcements?: any[];
+  courses?: any[];
+  issues?: any[];
+  leads: Lead[];
+  setLeads?: React.Dispatch<React.SetStateAction<Lead[]>>;
+  setClients?: React.Dispatch<React.SetStateAction<Client[]>>;
+  services: Service[];
+  campaigns?: Campaign[];
+  campaignProspects?: any[];
+  campaignSequences?: any[];
+  activeDeals?: any[];
+  nurturingLeads?: any[];
+  noResponseLeads?: any[];
+  suppressedLeads?: any[];
+  channels: Channel[];
+  inboundSources?: any[];
+  inboundLeads?: any[];
+  inboundActiveDeals?: any[];
+  inboundNurturing?: any[];
+  inboundNoResponseLeads?: any[];
+  inboundSuppressedLeads?: any[];
+  quotations?: Quotation[];
+}
+
+const GenericEmployeePanel: React.FC<GenericEmployeePanelProps> = ({
+  employee,
+  onLogout,
+  employees = [],
+  announcements = [],
+  courses = [],
+  issues = [],
+  leads = [],
+  setLeads,
+  setClients,
+  services = [],
+  campaigns = [],
+  campaignProspects = [],
+  campaignSequences = [],
+  activeDeals = [],
+  nurturingLeads = [],
+  noResponseLeads = [],
+  suppressedLeads = [],
+  channels = [],
+  inboundSources = [],
+  inboundLeads = [],
+  inboundActiveDeals = [],
+  inboundNurturing = [],
+  inboundNoResponseLeads = [],
+  inboundSuppressedLeads = [],
+  quotations = []
+}) => {
+  const [currentView, setCurrentView] = useState<'dashboard' | 'internal_hub' | 'quotations'>('dashboard');
+
+  const unreadAnnouncementsCount = announcements.filter(a => !a.readBy?.includes(employee.id)).length;
+  const assignedIssuesCount = issues.filter(i => 
+    i.assignedTo === employee.id && 
+    (i.status === 'Open' || i.status === 'Assigned' || i.status === 'In Progress')
+  ).length;
+  const incompleteCoursesCount = courses.filter(c => 
+    (c.assignedEmployees?.includes(employee.id) || c.department === 'All Departments' || c.department === employee.department) && 
+    !c.completedBy?.some((comp: any) => comp.employeeId === employee.id)
+  ).length;
+  const hubBadgeCount = unreadAnnouncementsCount + assignedIssuesCount + incompleteCoursesCount;
+  const isSales = employee.department?.toLowerCase().includes('sales');
+
+  const activeSalesCount = React.useMemo(() => {
+    if (!isSales) return 0;
+    const outboundActive = activeDeals.filter(d => 
+      d.assignedEmployeeId === employee.id && 
+      d.outboundStage !== 'Closed Won' && 
+      d.outboundStage !== 'Closed Lost'
+    ).length;
+
+    const inboundActive = inboundActiveDeals.filter(d => 
+      d.assignedEmployeeId === employee.id && 
+      d.outboundStage !== 'Closed Won' && 
+      d.outboundStage !== 'Closed Lost'
+    ).length;
+
+    return outboundActive + inboundActive;
+  }, [activeDeals, inboundActiveDeals, employee.id, isSales]);
+
+  const employeeQuotationsCount = React.useMemo(() => {
+    if (!isSales) return 0;
+    // 1. Employee's created quotations that are in 'Draft', 'Sent' or 'Manager Approved'
+    const myQuotes = quotations.filter(q => 
+      (q as any).createdByEmployeeId === employee.id &&
+      ['Draft', 'Sent', 'Manager Approved'].includes(q.status)
+    ).length;
+
+    // 2. Active pipeline deals that are in stage 'Quotation' but have no quotation yet
+    const dealsWithQuotes = new Set(quotations.map(q => q.salesDealId).filter(Boolean));
+    
+    const activeOutbound = activeDeals.filter(d => 
+      d.assignedEmployeeId === employee.id && 
+      d.outboundStage === 'Quotation' && 
+      !dealsWithQuotes.has(d.id)
+    ).length;
+
+    const activeInbound = inboundActiveDeals.filter(d => 
+      d.assignedEmployeeId === employee.id && 
+      d.outboundStage === 'Quotation' && 
+      !dealsWithQuotes.has(d.id)
+    ).length;
+
+    return myQuotes + activeOutbound + activeInbound;
+  }, [quotations, activeDeals, inboundActiveDeals, employee.id, isSales]);
+
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-xs">
+      {/* Sidebar Navigation */}
+      <aside className="w-56 bg-[#0f172a] text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
+        <div className="p-5 flex flex-col items-start gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center shadow-lg">
+            <span className="text-white font-extrabold text-sm">{employee.department.substring(0, 1).toUpperCase()}</span>
+          </div>
+          <div>
+            <h4 className="font-bold text-xs text-white tracking-tight leading-none">{employee.name}</h4>
+            <span className="text-[8px] text-slate-400 font-bold uppercase tracking-wider block mt-1">{employee.department} OP</span>
+          </div>
+        </div>
+
+        <div className="h-px bg-slate-800 mx-5 mb-4"></div>
+
+        <nav className="flex-1 px-3 space-y-1">
+          <button
+            onClick={() => setCurrentView('dashboard')}
+            className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+              currentView === 'dashboard' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <LayoutDashboard size={13} className={currentView === 'dashboard' ? 'text-white' : 'text-slate-400'} />
+              <span>Dashboard</span>
+            </div>
+            {isSales && activeSalesCount > 0 && (
+              <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                {activeSalesCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setCurrentView('internal_hub')}
+            className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+              currentView === 'internal_hub' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Building2 size={13} className={currentView === 'internal_hub' ? 'text-white' : 'text-slate-400'} /> 
+              <span>Internal Hub</span>
+            </div>
+            {hubBadgeCount > 0 && (
+              <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                {hubBadgeCount}
+              </span>
+            )}
+          </button>
+
+          {isSales && (
+            <button
+              onClick={() => setCurrentView('quotations')}
+              className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+                currentView === 'quotations' ? 'bg-indigo-700 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <FileText size={13} className={currentView === 'quotations' ? 'text-white' : 'text-slate-400'} />
+                <span>Quotations</span>
+              </div>
+              {employeeQuotationsCount > 0 && (
+                <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                  {employeeQuotationsCount}
+                </span>
+              )}
+            </button>
+          )}
+        </nav>
+
+        <div className="p-4 border-t border-slate-800">
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-950/30 rounded-lg text-xs font-bold transition"
+          >
+            <LogOut size={13} /> Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Workspace Body */}
+      <main className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+        {currentView === 'internal_hub' ? (
+          <div className="flex-1 overflow-y-auto p-5">
+            <InternalHub currentUser={employee} employees={employees} />
+          </div>
+        ) : currentView === 'quotations' && isSales ? (
+          <div className="flex-1 overflow-hidden">
+            <SalesQuotationBoard
+              currentUser={employee}
+              activeDeals={activeDeals}
+              inboundActiveDeals={inboundActiveDeals}
+              quotations={quotations}
+            />
+          </div>
+        ) : isSales ? (
+          <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
+            <SalesCRM
+              leads={leads}
+              setLeads={setLeads}
+              setClients={setClients}
+              services={services}
+              campaigns={campaigns}
+              campaignProspects={campaignProspects}
+              campaignSequences={campaignSequences}
+              activeDeals={activeDeals}
+              nurturingLeads={nurturingLeads}
+              noResponseLeads={noResponseLeads}
+              suppressedLeads={suppressedLeads}
+              channels={channels}
+              inboundSources={inboundSources}
+              inboundLeads={inboundLeads}
+              inboundActiveDeals={inboundActiveDeals}
+              inboundNurturing={inboundNurturing}
+              inboundNoResponseLeads={inboundNoResponseLeads}
+              inboundSuppressedLeads={inboundSuppressedLeads}
+              quotations={quotations}
+              currentUser={employee}
+              employees={employees}
+            />
+
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col p-6 overflow-hidden">
+            {/* Header */}
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-lg font-black text-slate-800 leading-none">Hello, {employee.name.split(' ')[0]}!</h3>
+                <span className="text-[9px] text-slate-450 font-bold uppercase tracking-wider block mt-1">
+                  {employee.department} Panel
+                </span>
+              </div>
+            </div>
+
+            {/* Content card */}
+            <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-[2rem] border border-slate-200/65 p-8 text-center shadow-sm">
+              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-4">
+                <Building2 size={32} />
+              </div>
+              <h2 className="text-xl font-extrabold text-slate-900 mb-1">Welcome to the {employee.department}</h2>
+              <p className="text-slate-500 max-w-sm text-xs leading-relaxed">
+                This workspace is currently blank and waiting for department setup.
+              </p>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+

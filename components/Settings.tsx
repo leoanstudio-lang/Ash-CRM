@@ -1,9 +1,11 @@
 
 import React, { useState } from 'react';
-import { Employee, Service, Role, Channel } from '../types';
-import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook, Megaphone, Sparkles } from 'lucide-react';
-import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, getCompanyProfile, saveCompanyProfile, addChannelToDB, deleteChannelFromDB, getAIConfig, saveAIConfig } from '../lib/db';
+import { Employee, Service, CatalogService, Role, Channel, Department } from '../types';
+import { UserPlus, Settings as SettingsIcon, Shield, Trash2, Key, Plus, LogOut, CheckCircle2, X, Save, Building2, Smartphone, Globe, Instagram, Facebook, Megaphone, Sparkles, FolderKanban, Banknote } from 'lucide-react';
+import { addEmployeeToDB, deleteEmployeeFromDB, addServiceToDB, deleteServiceFromDB, addCatalogServiceToDB, deleteCatalogServiceFromDB, getCompanyProfile, saveCompanyProfile, addChannelToDB, deleteChannelFromDB, getAIConfig, saveAIConfig, addDepartmentToDB, deleteDepartmentFromDB } from '../lib/db';
 import { CompanyProfile, AIConfig } from '../types';
+import { collection, query, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 
 interface SettingsProps {
   employees: Employee[];
@@ -11,11 +13,12 @@ interface SettingsProps {
   services: Service[];
   setServices?: React.Dispatch<React.SetStateAction<Service[]>>; // Optional/Deprecated
   channels?: Channel[];
+  departments?: Department[];
   onLogout: () => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [], onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'channels' | 'admin' | 'company' | 'aiConfig'>('employees');
+const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [], departments = [], onLogout }) => {
+  const [activeTab, setActiveTab] = useState<'employees' | 'services' | 'catalog' | 'channels' | 'admin' | 'company' | 'aiConfig'>('employees');
 
   // Company Profile State
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -129,10 +132,31 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
     alert('AI Configuration saved successfully!');
   };
 
-  // States for better form handling
+  // States for standard services (reverted to original simple format)
   const [newServiceName, setNewServiceName] = useState('');
   const [newServiceCategory, setNewServiceCategory] = useState('Graphic Designing');
   const [isAddingService, setIsAddingService] = useState(false);
+
+  // States for new Catalog Services
+  const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
+  const [isAddingCatalog, setIsAddingCatalog] = useState(false);
+  const [newCatalogName, setNewCatalogName] = useState('');
+  const [newCatalogCategory, setNewCatalogCategory] = useState('Graphic Designing');
+  const [newCatalogPrice, setNewCatalogPrice] = useState('');
+  const [newCatalogBillingCycle, setNewCatalogBillingCycle] = useState<'one_time' | 'monthly' | 'yearly'>('one_time');
+  const [newCatalogDescription, setNewCatalogDescription] = useState('');
+
+  React.useEffect(() => {
+    const q = query(collection(db, 'catalog_services'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: CatalogService[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as CatalogService);
+      });
+      setCatalogServices(list);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Employee Form State
   const [showAddEmployee, setShowAddEmployee] = useState(false);
@@ -147,6 +171,24 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
   // Channel Form State
   const [newChannelName, setNewChannelName] = useState('');
   const [isAddingChannel, setIsAddingChannel] = useState(false);
+
+  // Department Form State
+  const [newDepartmentName, setNewDepartmentName] = useState('');
+  const [isAddingDepartment, setIsAddingDepartment] = useState(false);
+
+  const handleAddDepartment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDepartmentName.trim()) return;
+    await addDepartmentToDB({ name: newDepartmentName });
+    setNewDepartmentName('');
+    setIsAddingDepartment(false);
+  };
+
+  const removeDepartment = async (id: string) => {
+    if (window.confirm('Are you sure you want to completely delete this department?')) {
+      await deleteDepartmentFromDB(id);
+    }
+  };
 
   const handleAddChannel = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -206,53 +248,146 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
     }
   };
 
+  const handleAddCatalogService = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatalogName.trim()) return;
+
+    const newSvc: Omit<CatalogService, 'id'> = {
+      name: newCatalogName,
+      category: newCatalogCategory,
+      price: Number(newCatalogPrice) || 0,
+      billingCycle: newCatalogBillingCycle,
+      description: newCatalogDescription
+    };
+
+    await addCatalogServiceToDB(newSvc);
+    setNewCatalogName('');
+    setNewCatalogPrice('');
+    setNewCatalogBillingCycle('one_time');
+    setNewCatalogDescription('');
+    setIsAddingCatalog(false);
+  };
+
+  const removeCatalogService = async (id: string) => {
+    if (window.confirm('Are you sure you want to permanently delete this catalog service definition?')) {
+      await deleteCatalogServiceFromDB(id);
+    }
+  };
+
   return (
-    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden min-h-[600px] flex flex-col">
-      <div className="flex border-b border-slate-100 bg-slate-50/50">
-        <button
-          onClick={() => setActiveTab('employees')}
-          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'employees' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Staff & Access
-        </button>
-        <button
-          onClick={() => setActiveTab('services')}
-          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'services' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Service Master List
-        </button>
-        <button
-          onClick={() => setActiveTab('company')}
-          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'company' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Company Config
-        </button>
-        <button
-          onClick={() => setActiveTab('channels')}
-          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'channels' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Outreach Channels
-        </button>
-        <button
-          onClick={() => setActiveTab('admin')}
-          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'admin' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          Security
-        </button>
-        <button
-          onClick={() => setActiveTab('aiConfig')}
-          className={`px-8 py-5 font-bold text-sm transition-all ${activeTab === 'aiConfig' ? 'text-blue-600 border-b-4 border-blue-600 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          <span className="flex items-center gap-2"><Sparkles size={14} className={activeTab === 'aiConfig' ? 'text-blue-600' : 'text-slate-400'}/> AI Configuration</span>
-        </button>
-        <div className="ml-auto p-4">
-          <button onClick={onLogout} className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold hover:bg-red-100 transition-all">
-            <LogOut size={16} /> Logout
+    <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden min-h-[700px] flex">
+      {/* Settings Navigation Sidebar */}
+      <div className="w-64 border-r border-slate-100 bg-slate-50/50 p-6 flex flex-col justify-between shrink-0 select-none">
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-2">User Management</h3>
+            <div className="space-y-1">
+              <button
+                onClick={() => setActiveTab('employees')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'employees'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <UserPlus size={14} />
+                <span>Staff & Access</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('admin')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'admin'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <Shield size={14} />
+                <span>Admin Security</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-2">Business Setup</h3>
+            <div className="space-y-1">
+              <button
+                onClick={() => setActiveTab('services')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'services'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <FolderKanban size={14} />
+                <span>Service Master List</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('catalog')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'catalog'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <Banknote size={14} />
+                <span>Pricing Catalog</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('channels')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'channels'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <Megaphone size={14} />
+                <span>Outreach Channels</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('company')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'company'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <Building2 size={14} />
+                <span>Company Config</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-2">AI & Connect</h3>
+            <div className="space-y-1">
+              <button
+                onClick={() => setActiveTab('aiConfig')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2.5 ${
+                  activeTab === 'aiConfig'
+                    ? 'text-blue-600 bg-blue-50/70 shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+              >
+                <Sparkles size={14} />
+                <span>AI Configuration</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Logout at bottom */}
+        <div className="pt-4 border-t border-slate-100">
+          <button
+            onClick={onLogout}
+            className="w-full px-3 py-2.5 text-left rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 hover:text-red-700 transition-all flex items-center gap-2.5"
+          >
+            <LogOut size={14} />
+            <span>Logout Account</span>
           </button>
         </div>
       </div>
 
-      <div className="p-10 flex-1 relative">
+      <div className="flex-1 p-10 overflow-y-auto max-h-[750px]">
         {activeTab === 'employees' && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -332,15 +467,77 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                     </div>
                     <div>
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Department</label>
-                      <select
-                        className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
-                        value={empForm.department}
-                        onChange={e => setEmpForm({ ...empForm, department: e.target.value })}
-                      >
-                        <option value="Graphic">Graphic Designing</option>
-                        <option value="Marketing">Digital Marketing</option>
-                        <option value="Unassigned">Unassigned</option>
-                      </select>
+                      {isAddingDepartment ? (
+                        <div className="flex gap-2 items-center">
+                          <input
+                            autoFocus
+                            className="flex-1 p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="New Department Name"
+                            value={newDepartmentName}
+                            onChange={e => setNewDepartmentName(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              const deptName = newDepartmentName.trim();
+                              if (deptName) {
+                                await handleAddDepartment(e);
+                                setEmpForm({ ...empForm, department: deptName });
+                              } else {
+                                setIsAddingDepartment(false);
+                              }
+                            }}
+                            className="px-4 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-sm"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingDepartment(false)}
+                            className="px-4 py-3 bg-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-300 transition-all"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2 items-center">
+                          <select
+                            className="flex-1 p-3 border border-slate-200 rounded-xl bg-slate-50 font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={empForm.department}
+                            onChange={e => {
+                              if (e.target.value === 'CREATE_NEW') {
+                                setIsAddingDepartment(true);
+                              } else {
+                                setEmpForm({ ...empForm, department: e.target.value });
+                              }
+                            }}
+                          >
+                            <option value="">Select a Department...</option>
+                            <option value="Graphic">Graphic Designing</option>
+                            <option value="Marketing">Digital Marketing</option>
+                            {departments.filter(d => d.name !== 'Graphic' && d.name !== 'Marketing').map(d => (
+                              <option key={d.id} value={d.name}>{d.name}</option>
+                            ))}
+                            <option value="CREATE_NEW" className="font-bold text-blue-600">+ Create New Department...</option>
+                          </select>
+                          {empForm.department && !['Graphic', 'Marketing'].includes(empForm.department) && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const deptToDelete = departments.find(d => d.name === empForm.department);
+                                if (deptToDelete && window.confirm(`Are you sure you want to delete the department "${deptToDelete.name}"?`)) {
+                                  await deleteDepartmentFromDB(deptToDelete.id);
+                                  setEmpForm({ ...empForm, department: 'Graphic' });
+                                }
+                              }}
+                              className="p-3 text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-xl transition-all shrink-0"
+                              title="Delete this department"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -375,16 +572,16 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
         )}
 
         {activeTab === 'services' && (
-          <div className="space-y-8">
+          <div className="space-y-8 animate-in fade-in duration-300">
             <div className="flex justify-between items-center">
               <div>
-                <h3 className="text-2xl font-black text-slate-900">Service Catalog</h3>
-                <p className="text-sm text-slate-500">Configure what services appear in task allocation menus.</p>
+                <h3 className="text-2xl font-black text-slate-900">Service Master List</h3>
+                <p className="text-sm text-slate-500">Configure what services appear in campaigns and employee routing.</p>
               </div>
               {!isAddingService && (
                 <button
                   onClick={() => setIsAddingService(true)}
-                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/20"
+                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/25 transition-all"
                 >
                   <Plus size={18} /> New Service
                 </button>
@@ -399,7 +596,7 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                     <input
                       autoFocus
                       type="text"
-                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800 bg-white text-xs"
                       placeholder="e.g., UI/UX Design Pro"
                       value={newServiceName}
                       onChange={e => setNewServiceName(e.target.value)}
@@ -408,7 +605,7 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                   <div className="w-full md:w-64">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 ml-1">Category</label>
                     <select
-                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800 bg-white text-xs"
                       value={newServiceCategory}
                       onChange={e => setNewServiceCategory(e.target.value)}
                     >
@@ -417,19 +614,22 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                       <option value="Mobile Development">Mobile Development</option>
                       <option value="SEO">SEO</option>
                       <option value="Digital Marketing">Digital Marketing</option>
+                      {departments.map(d => (
+                        <option key={d.id} value={d.name}>{d.name}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="flex items-end gap-2">
                     <button
                       type="submit"
-                      className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 transition-all"
+                      className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 transition-all text-xs"
                     >
                       Save Service
                     </button>
                     <button
                       type="button"
                       onClick={() => setIsAddingService(false)}
-                      className="px-6 py-3 bg-white text-slate-500 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all"
+                      className="px-6 py-3 bg-white text-slate-500 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all text-xs"
                     >
                       Cancel
                     </button>
@@ -447,7 +647,7 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                   </div>
                   <button
                     onClick={() => removeService(svc.id)}
-                    className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                    className="text-slate-350 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -459,6 +659,173 @@ const Settings: React.FC<SettingsProps> = ({ employees, services, channels = [],
                   <p className="text-slate-500 font-medium">No services defined yet.</p>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'catalog' && (
+          <div className="space-y-8 animate-in fade-in duration-300">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-2xl font-black text-slate-900">Pricing Catalog</h3>
+                <p className="text-sm text-slate-500 mt-1">Configure service definitions, standard rates, and billing cycles for proposals & invoicing.</p>
+              </div>
+              {!isAddingCatalog && (
+                <button
+                  onClick={() => setIsAddingCatalog(true)}
+                  className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-sm font-bold shadow-xl shadow-indigo-600/25 transition-all"
+                >
+                  <Plus size={18} /> New Catalog Item
+                </button>
+              )}
+            </div>
+
+            {isAddingCatalog && (
+              <form onSubmit={handleAddCatalogService} className="bg-slate-50 p-8 rounded-3xl border border-slate-200 shadow-sm space-y-5 animate-in fade-in slide-in-from-top-3 duration-350">
+                <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-200 pb-2">Add Master Catalog Definition</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Service Name</label>
+                    <input
+                      autoFocus
+                      required
+                      type="text"
+                      className="w-full p-3.5 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-bold text-slate-800 text-xs"
+                      placeholder="e.g. Premium UI/UX Design System"
+                      value={newCatalogName}
+                      onChange={e => setNewCatalogName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Department Category</label>
+                    <select
+                      className="w-full p-3.5 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-bold text-slate-850 text-xs"
+                      value={newCatalogCategory}
+                      onChange={e => setNewCatalogCategory(e.target.value)}
+                    >
+                      <option value="Web Development">Web Development</option>
+                      <option value="Graphic Designing">Graphic Designing</option>
+                      <option value="Mobile Development">Mobile Development</option>
+                      <option value="SEO">SEO</option>
+                      <option value="Digital Marketing">Digital Marketing</option>
+                      {departments.map(d => (
+                        <option key={d.id} value={d.name}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Standard Rate (₹)</label>
+                    <input
+                      required
+                      type="number"
+                      className="w-full p-3.5 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-bold text-slate-800 text-xs"
+                      placeholder="e.g. 25000"
+                      value={newCatalogPrice}
+                      onChange={e => setNewCatalogPrice(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Billing Cycle</label>
+                    <select
+                      className="w-full p-3.5 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-bold text-slate-850 text-xs"
+                      value={newCatalogBillingCycle}
+                      onChange={e => setNewCatalogBillingCycle(e.target.value as any)}
+                    >
+                      <option value="one_time">One-time Payment</option>
+                      <option value="monthly">Monthly Recurring</option>
+                      <option value="yearly">Annual Recurring</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Scope / Description</label>
+                    <input
+                      type="text"
+                      className="w-full p-3.5 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-bold text-slate-800 text-xs"
+                      placeholder="e.g. 5 Screens, Figma source"
+                      value={newCatalogDescription}
+                      onChange={e => setNewCatalogDescription(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingCatalog(false)}
+                    className="px-6 py-2.5 bg-white text-slate-500 font-bold rounded-2xl border border-slate-200 hover:bg-slate-50 transition-all text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg transition-all text-xs"
+                  >
+                    Add to Catalog
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Catalog List Table */}
+            <div className="overflow-x-auto border border-slate-150 rounded-2xl shadow-sm">
+              <table className="w-full text-left border-collapse bg-white">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-150 text-[9px] font-black uppercase text-slate-450 tracking-wider">
+                    <th className="py-3 px-6">Service Details</th>
+                    <th className="py-3 px-4">Billing Cycle</th>
+                    <th className="py-3 px-4">Standard Price</th>
+                    <th className="py-3 px-6">Scope / Description</th>
+                    <th className="py-3 px-6 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {catalogServices.map((svc) => (
+                    <tr key={svc.id} className="hover:bg-slate-50/50 transition-all group">
+                      <td className="py-4 px-6">
+                        <span className="font-bold text-slate-800 block text-sm">{svc.name}</span>
+                        <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest mt-1 block">
+                          {svc.category}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 font-semibold text-slate-700">
+                        <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                          svc.billingCycle === 'monthly'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                            : svc.billingCycle === 'yearly'
+                            ? 'bg-purple-50 text-purple-700 border border-purple-100'
+                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        }`}>
+                          {svc.billingCycle === 'monthly' ? 'Monthly' : svc.billingCycle === 'yearly' ? 'Yearly' : 'One-time'}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 font-black text-slate-850">
+                        ₹{(svc.price || 0).toLocaleString()}
+                      </td>
+                      <td className="py-4 px-6 text-slate-500 font-medium max-w-xs truncate" title={svc.description}>
+                        {svc.description || '—'}
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <button
+                          onClick={() => removeCatalogService(svc.id)}
+                          className="text-slate-350 hover:text-red-600 p-2 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {catalogServices.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-slate-400 italic font-bold">
+                        No service definitions in the catalog yet. Click "New Catalog Item" to add.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

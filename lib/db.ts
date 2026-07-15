@@ -13,7 +13,7 @@ import {
     Timestamp
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Project, Client, Lead, Employee, Service, Package, PaymentAlert, CompanyProfile, AIConfig, Quotation } from "../types";
+import { Project, Client, Lead, Employee, Service, CatalogService, Package, PaymentAlert, CompanyProfile, AIConfig, Quotation } from "../types";
 
 // --- Generic Helpers ---
 
@@ -234,6 +234,23 @@ export const deleteServiceFromDB = async (id: string) => {
     }
 }
 
+// --- Catalog Services ---
+export const addCatalogServiceToDB = async (catalogService: Omit<CatalogService, 'id'>) => {
+    try {
+        await addDoc(collection(db, "catalog_services"), catalogService);
+    } catch (e) {
+        console.error("Error adding catalog service: ", e);
+    }
+}
+
+export const deleteCatalogServiceFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "catalog_services", id));
+    } catch (e) {
+        console.error("Error deleting catalog service: ", e);
+    }
+}
+
 // --- Outbound Channels ---
 export const addChannelToDB = async (channel: { name: string }) => {
     try {
@@ -248,6 +265,23 @@ export const deleteChannelFromDB = async (id: string) => {
         await deleteDoc(doc(db, "channels", id));
     } catch (e) {
         console.error("Error deleting channel: ", e);
+    }
+}
+
+// --- Departments ---
+export const addDepartmentToDB = async (department: { name: string }) => {
+    try {
+        await addDoc(collection(db, "departments"), department);
+    } catch (e) {
+        console.error("Error adding department: ", e);
+    }
+}
+
+export const deleteDepartmentFromDB = async (id: string) => {
+    try {
+        await deleteDoc(doc(db, "departments", id));
+    } catch (e) {
+        console.error("Error deleting department: ", e);
     }
 }
 
@@ -535,6 +569,27 @@ export const saveAIConfig = async (config: AIConfig) => {
 };
 
 // --- Quotations ---
+
+export const generateProfessionalQuotationId = async (): Promise<string> => {
+    try {
+        const year = new Date().getFullYear();
+        const snapshot = await getDocs(collection(db, 'quotations'));
+        let maxSeq = 0;
+        const prefix = `QT-${year}-`;
+        snapshot.forEach((doc) => {
+            const qn: string = doc.data().quotationNumber || '';
+            if (qn.startsWith(prefix)) {
+                const num = parseInt(qn.replace(prefix, ''), 10);
+                if (!isNaN(num) && num > maxSeq) maxSeq = num;
+            }
+        });
+        const next = maxSeq + 1;
+        return `QT-${year}-${String(next).padStart(3, '0')}`;
+    } catch (e) {
+        // Fallback to timestamp-based if Firestore fails
+        return `QT-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    }
+};
 
 export const addQuotationToDB = async (quotation: Omit<Quotation, 'id'>) => {
     try {

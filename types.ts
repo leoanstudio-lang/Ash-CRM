@@ -186,6 +186,10 @@ export interface Lead {
   value?: number; // Potential Deal Value
   dateAdded?: string;
   googleResourceName?: string; // ID for Google Contacts sync
+  assignedEmployeeId?: string;
+  assignedEmployeeName?: string;
+  incentiveStatus?: 'Unpaid' | 'Paid';
+  incentiveAmount?: number;
 
   // -- Outbound Specific Fields (DEPRECATED - Moved to separate collections) --
   // These fields shouldn't be used for new outbound flow, keeping for legacy type safety if needed temporarily
@@ -205,19 +209,25 @@ export interface Channel {
   name: string;
 }
 
+export interface Department {
+  id: string;
+  name: string;
+}
+
 export interface Campaign {
   id: string;
   name: string;
   targetRegion: string;
-  serviceId: string;
-  channel: string; // Dynamic ID or Name string
+  serviceId?: string;
+  channel?: string; // Dynamic ID or Name string
   startDate: string;
-  endDate: string;
-  cost: number;
+  endDate?: string;
+  cost?: number;
   status: 'Active' | 'Paused' | 'Completed';
   createdAt: string;
   isArchived?: boolean;
   department?: string; // Which department to route closed deals to (e.g. 'Development', 'Graphics Designing', 'Marketing')
+  notes?: string;
 }
 
 export interface ContactMethod {
@@ -252,7 +262,7 @@ export interface CampaignProspect {
   mobile?: string;
   email?: string;
 
-  outboundStatus: 'Not Contacted' | 'Message Sent' | 'Replied' | 'Interested' | 'Not Interested' | 'No Response';
+  outboundStatus: 'Not Contacted' | 'Called' | 'Message Sent' | 'Mailed' | 'Replied' | 'Interested' | 'Not Interested' | 'No Response';
   attemptCount: number;
   lastContactedDate?: string;
   leadScore: number;
@@ -369,6 +379,15 @@ export interface Service {
   category: string;
 }
 
+export interface CatalogService {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  billingCycle: 'one_time' | 'monthly' | 'yearly';
+  description?: string;
+}
+
 // --- Package Management Types ---
 
 export interface PackageLineItem {
@@ -465,7 +484,7 @@ export interface Quotation {
   discount?: number;
   totalAmount: number;
   termsAndConditions: string;
-  status: 'Draft' | 'Sent' | 'Approved' | 'Rejected';
+  status: 'Draft' | 'Sent' | 'Manager Approved' | 'Approved' | 'Rejected';
   createdAt: string;
   isNewClient: boolean;
   isCustomHtml?: boolean;

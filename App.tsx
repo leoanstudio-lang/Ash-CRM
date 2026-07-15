@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel, Strategy, ManualTask, EmployeeNotification } from './types';
+import { Section, Client, Lead, Project, Employee, Notification, Service, Role, Package, PaymentAlert, Channel, Strategy, ManualTask, EmployeeNotification, Department } from './types';
 import Sidebar from './components/Sidebar';
 import ExecutionCenter from './components/ExecutionCenter';
 import Strategies from './components/Strategies';
@@ -164,6 +164,7 @@ const App: React.FC = () => {
   const [noResponseLeads, setNoResponseLeads] = useState<any[]>([]);
   const [suppressedLeads, setSuppressedLeads] = useState<any[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
 
   // Inbound Separated Collections
   const [inboundSources, setInboundSources] = useState<any[]>([]);
@@ -194,6 +195,7 @@ const App: React.FC = () => {
     const unsubNoResponseLeads = subscribeToCollection<any>('noResponsePool', setNoResponseLeads);
     const unsubSuppressedLeads = subscribeToCollection<any>('suppressionList', setSuppressedLeads);
     const unsubChannels = subscribeToCollection<Channel>('channels', setChannels);
+    const unsubDepartments = subscribeToCollection<Department>('departments', setDepartments);
     const unsubInboundSources = subscribeToCollection<any>('inboundSources', setInboundSources);
     const unsubInboundLeads = subscribeToCollection<any>('inboundLeads', setInboundLeads);
     const unsubInboundActiveDeals = subscribeToCollection<any>('inboundActiveDeals', setInboundActiveDeals);
@@ -234,6 +236,7 @@ const App: React.FC = () => {
       unsubNoResponseLeads();
       unsubSuppressedLeads();
       unsubChannels();
+      unsubDepartments();
       unsubInboundSources();
       unsubInboundLeads();
       unsubInboundActiveDeals();
@@ -550,6 +553,26 @@ const App: React.FC = () => {
         announcements={hubAnnouncements}
         courses={hubCourses}
         issues={hubIssues}
+        // Pass Sales CRM data
+        leads={leads}
+        setLeads={setLeads}
+        setClients={setClients}
+        services={services}
+        campaigns={campaigns}
+        campaignProspects={campaignProspects}
+        campaignSequences={campaignSequences}
+        activeDeals={activeDeals}
+        nurturingLeads={nurturingLeads}
+        noResponseLeads={noResponseLeads}
+        suppressedLeads={suppressedLeads}
+        channels={channels}
+        inboundSources={inboundSources}
+        inboundLeads={inboundLeads}
+        inboundActiveDeals={inboundActiveDeals}
+        inboundNurturing={inboundNurturing}
+        inboundNoResponseLeads={inboundNoResponseLeads}
+        inboundSuppressedLeads={inboundSuppressedLeads}
+        quotations={quotations}
       />
     );
   }
@@ -576,6 +599,8 @@ const App: React.FC = () => {
         onClearAutoOpen={() => setAutoOpenProspectId(null)}
         departments={['Development', 'Graphics Designing', 'Marketing']}
         quotations={quotations}
+        currentUser={currentUser}
+        employees={employees}
       />;
       case 'Client DB': return <ClientDB clients={clients} setClients={setClients} />;
       case 'History': return <History projects={projects} setProjects={setProjects} employees={employees} packages={packages} />;
@@ -592,7 +617,7 @@ const App: React.FC = () => {
         onDismiss={handleDismissNotification}
         onClearAll={handleClearAllNotifications}
       />;
-      case 'Settings': return <Settings employees={employees} setEmployees={setEmployees} services={services} setServices={setServices} channels={channels} onLogout={handleLogout} />;
+      case 'Settings': return <Settings employees={employees} setEmployees={setEmployees} services={services} setServices={setServices} channels={channels} departments={departments} onLogout={handleLogout} />;
       default: return <ExecutionCenter tasks={executionTasks} clients={clients} projects={projects} employees={employees} />;
     }
   };
@@ -652,7 +677,7 @@ const App: React.FC = () => {
   const counts = {
     'Execution Center': executionTasks.filter(t => t.status === 'Pending' || t.status === 'In Progress').length,
     Payments: paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting').length,
-    Quotations: quotations.filter(q => q.status === 'Draft' || q.status === 'Sent').length,
+    Quotations: quotations.filter(q => ['Draft', 'Sent', 'Manager Approved'].includes(q.status)).length,
     'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
     'Graphics Designing': projects.filter(p =>
       p.type === 'Graphic' &&
