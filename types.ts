@@ -1,5 +1,5 @@
 
-export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Marketing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'History' | 'Payments' | 'Content Studio' | 'Accounts' | 'Internal Hub' | 'Attendance';
+export type Section = 'Execution Center' | 'Strategies' | 'Quotations' | 'Development' | 'Graphics Designing' | 'Marketing' | 'Sales CRM' | 'Client DB' | 'Notification' | 'Settings' | 'Payments' | 'Content Studio' | 'Accounts' | 'Internal Hub' | 'Attendance' | 'Invoices';
 export type Role = 'admin' | 'employee' | 'super_admin' | 'team_lead' | 'dept_manager' | 'hr';
 export type Priority = 'Low' | 'Medium' | 'High' | 'Urgent';
 
@@ -140,6 +140,18 @@ export interface MarketingServiceAllocation {
   googleDocTabTitle?: string;
 }
 
+export interface GraphicDeliverableLog {
+  id: string;
+  date: string; // ISO date string
+  count: number;
+  note?: string;
+  fileName?: string;
+  fileUrl?: string;
+  workLink?: string;
+  completedBy: string;
+  completedByName?: string;
+}
+
 export interface Project {
   id: string;
   clientId: string;
@@ -159,9 +171,14 @@ export interface Project {
   assignedEmployeeId?: string;
   clientName?: string; // Denormalized for ease
   serviceName?: string; // Denormalized for ease
+  department?: string; // Department associated with task (e.g., 'Graphics Designing')
+  totalDeliverables?: number; // Total item quantity (e.g. 10 posters)
+  completedDeliverables?: number; // Completed item quantity (e.g. 4 posters)
+  deliverableLogs?: GraphicDeliverableLog[]; // Log of completed items
   packageId?: string; // Links task to a package (optional)
   packageLineItemIndex?: number; // Which line item in the package this task belongs to
   deliveryFileName?: string; // File name / description entered by employee on task completion
+  workLink?: string; // Project Drive / Figma / Canva folder URL
   documentation?: string; // Free-form Google Docs style documentation
   notes?: ProjectNote[]; // Keep style notes
   servicesAllocated?: MarketingServiceAllocation[]; // Services allocated for Marketing campaigns
@@ -515,9 +532,67 @@ export interface QuotationDemo {
   isNewClient: boolean;
 }
 
+// --- Invoice Management Types ---
+
+export interface InvoiceItem {
+  serviceName?: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string; // e.g. INV-2026-001
+  issueDate: string;
+  dueDate: string;
+  clientId?: string;
+  clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientAddress?: string;
+  paymentAlertId?: string; // Linked PaymentAlert ID if created from suggestion
+  packageId?: string;
+  projectId?: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  discount?: number;
+  tax?: number;
+  totalAmount: number;
+  termsAndConditions: string;
+  notes?: string;
+  status: 'Draft' | 'Sent' | 'Pending' | 'Received' | 'Cancelled';
+  createdAt: string;
+  createdBy?: string;
+}
+
+
 // --- Accounting Module Types ---
 
 export type AccountType = 'Revenue' | 'Expense' | 'Asset' | 'Liability' | 'Equity';
+
+export type MoneyInType = 'Sales Revenue' | 'Owner Investment' | 'Loan Received' | 'Client Advance' | 'Other Income';
+export type MoneyOutType = 'Operational Expense' | 'Fixed Asset Purchase' | 'Loan Repayment' | 'Owner Withdrawal' | 'Security Deposit' | 'Advance Payment' | 'Other Payment';
+
+export type FinancialAccountType = 'Cash' | 'Petty Cash' | 'Bank' | 'UPI' | 'Credit Card' | 'Payment Gateway' | 'Other';
+
+export interface FinancialAccount {
+  id: string;
+  accountName: string; // e.g. "Office Cash", "Federal Bank Current Account"
+  accountType: FinancialAccountType;
+  bankName?: string; // Only if Bank selected
+  accountNumber?: string;
+  ifscCode?: string;
+  openingBalance: number;
+  openingBalanceDate: string;
+  currentBalance?: number;
+  status: 'Active' | 'Inactive';
+  isDefault: boolean;
+  remarks?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
 
 export interface AccountingCategory {
   id: string;
@@ -534,12 +609,15 @@ export interface JournalEntryLine {
   accountType: AccountType;
   amount: number;
   type: 'DEBIT' | 'CREDIT';
+  financialAccountId?: string;
+  financialAccountName?: string;
 }
 
 export interface JournalEntry {
   id: string;
   date: string;
-  type: 'Revenue' | 'Expense' | 'Asset' | 'Loan' | 'Capital';
+  type: 'Revenue' | 'Expense' | 'Asset' | 'Loan' | 'Capital' | 'Withdrawal' | 'Deposit';
+  subType?: MoneyInType | MoneyOutType;
   referenceId?: string; // e.g. paymentId, to prevent duplicates
   remarks: string;
   entries: JournalEntryLine[];
@@ -548,7 +626,15 @@ export interface JournalEntry {
   updatedBy?: string;
   updatedAt?: string;
   isVoided?: boolean;
-  periodMonth?: string; // e.g. "April 2026" — the period this revenue belongs to (may differ from receipt date)
+  periodMonth?: string;
+  vendor?: string;
+  clientId?: string;
+  clientName?: string;
+  loanId?: string;
+  assetId?: string;
+  interestAmount?: number;
+  financialAccountId?: string;
+  financialAccountName?: string;
 }
 
 export interface AccountingAsset {
@@ -560,6 +646,10 @@ export interface AccountingAsset {
   cost: number;
   usefulLifeYears: number;
   paymentMethod: string;
+  paymentSource?: 'Cash' | 'Bank' | 'Loan' | 'Credit' | 'Owner Contribution' | 'Opening Balance';
+  isOpeningAsset?: boolean;
+  vendor?: string;
+  status?: 'Active' | 'Disposed' | 'Maintenance';
   journalEntryId?: string;
   remarks?: string;
   createdAt: string;
@@ -569,13 +659,60 @@ export interface AccountingLoan {
   id: string;
   name: string;
   lender: string;
+  source?: 'Bank' | 'Family' | 'Friend' | 'Credit Card' | 'Finance Company' | 'Mother' | 'Brother' | 'Other';
   amount: number;
   interestRate?: number;
+  emiAmount?: number;
   remainingBalance: number;
   date: string;
+  startDate?: string;
+  endDate?: string;
+  status?: 'Active' | 'Paid Off';
   journalEntryId?: string;
+  isOpeningBalance?: boolean;
   remarks?: string;
   createdAt: string;
+}
+
+export type VendorType =
+  | 'Landlord'
+  | 'Employee'
+  | 'Freelancer'
+  | 'Consultant'
+  | 'Office Supplier'
+  | 'Printing'
+  | 'Marketing Agency'
+  | 'Software Subscription'
+  | 'Internet Provider'
+  | 'Electricity Provider'
+  | 'Finance Company'
+  | 'Government'
+  | 'Courier'
+  | 'Maintenance'
+  | 'Miscellaneous'
+  | 'Custom';
+
+export interface Vendor {
+  id: string;
+  name: string;
+  vendorType: VendorType | string;
+  contactPerson?: string;
+  mobile?: string;
+  email?: string;
+  gstNumber?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  bankName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  website?: string;
+  notes?: string;
+  status: 'Active' | 'Inactive' | 'Archived';
+  outstandingBalance?: number;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 // --- Manual Task (Employee-Created) ---

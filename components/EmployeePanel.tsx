@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Employee, Project, Priority, Client, Package, ManualTask, QuotationDemo, MarketingServiceAllocation, MarketingReportEntry, ProjectNote, Lead, Service, Campaign, Channel, Quotation } from '../types';
-import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare, ArrowLeft, Layers, FileText, Download, Save, Trash2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Building2 } from 'lucide-react';
+import { LogOut, CheckCircle, Clock, AlertCircle, Calendar, ChevronRight, DollarSign, Wallet, PauseCircle, PlayCircle, Loader2, LayoutDashboard, Search, ChevronDown, Filter, Plus, PlaySquare, ArrowLeft, Layers, FileText, Download, Save, Trash2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered, Building2, Menu, X } from 'lucide-react';
 import { updateProjectInDB, updatePackageInDB, addPaymentAlertToDB, updateManualTaskInDB, updateQuotationDemoInDB } from '../lib/db';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -11,6 +11,7 @@ import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark
 import InternalHub from './InternalHub';
 import SalesCRM from './SalesCRM';
 import SalesQuotationBoard from './SalesQuotationBoard';
+import GraphicEmployeePanel from './GraphicEmployeePanel';
 
 type EmployeeView = 'dashboard' | 'pending' | 'waiting' | 'working' | 'demos' | 'internal_hub';
 
@@ -51,6 +52,7 @@ interface EmployeePanelProps {
 const EmployeePanel: React.FC<EmployeePanelProps> = ({ 
   employee, 
   projects, 
+  setProjects,
   clients, 
   manualTasks = [], 
   quotationDemos = [], 
@@ -93,6 +95,24 @@ const EmployeePanel: React.FC<EmployeePanelProps> = ({
         announcements={announcements} 
         courses={courses} 
         issues={issues} 
+      />
+    );
+  }
+
+  if (isGraphic) {
+    return (
+      <GraphicEmployeePanel
+        employee={employee}
+        projects={projects}
+        setProjects={setProjects}
+        clients={clients}
+        manualTasks={manualTasks}
+        quotationDemos={quotationDemos}
+        onLogout={onLogout}
+        employees={employees}
+        announcements={announcements}
+        courses={courses}
+        issues={issues}
       />
     );
   }
@@ -1251,6 +1271,8 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({
   ).length;
   const hubBadgeCount = unreadAnnouncementsCount + assignedIssuesCount + incompleteCoursesCount;
   const [activeProjId, setActiveProjId] = useState<string | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
   const [workspaceTab, setWorkspaceTab] = useState<'services' | 'reports' | 'notes'>('services');
   const [reportTexts, setReportTexts] = useState<Record<string, string>>({});
   const [selectedReportServiceId, setSelectedReportServiceId] = useState<string>('');
@@ -1261,10 +1283,28 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({
   const editorRef = useRef<HTMLDivElement>(null);
   const notesEditorRef = useRef<HTMLDivElement>(null);
 
-  const myMarketingProjects = projects.filter(proj => {
-    if (proj.type !== 'Marketing') return false;
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  const safeClients = Array.isArray(clients) ? clients : [];
+
+  const myMarketingProjects = safeProjects.filter(proj => {
+    if (!proj || proj.type !== 'Marketing') return false;
     const allocs = proj.servicesAllocated || [];
     return allocs.some(alloc => alloc.assignedEmployeeId === employee.id);
+  });
+
+  const myMarketingClients = safeClients.filter(c => c && c.id && (
+    myMarketingProjects.some(p => p.clientId === c.id)
+  ));
+
+  const filteredClients = myMarketingClients.filter(c => c && (
+    (c.name || '').toLowerCase().includes(clientSearchTerm.toLowerCase()) ||
+    (c.companyName || '').toLowerCase().includes(clientSearchTerm.toLowerCase())
+  ));
+
+  const sortedClients = [...filteredClients].sort((a, b) => {
+    const aActive = myMarketingProjects.filter(p => p.clientId === a.id && p.status !== 'Completed' && p.status !== 'Closed').length;
+    const bActive = myMarketingProjects.filter(p => p.clientId === b.id && p.status !== 'Completed' && p.status !== 'Closed').length;
+    return bActive - aActive;
   });
 
   const activeProj = projects.find(p => p.id === activeProjId);
@@ -1538,12 +1578,13 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({
             onClick={() => {
               setMarketingView('campaigns');
               setActiveProjId(null);
+              setSelectedClient(null);
             }}
             className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${
-              marketingView === 'campaigns' && !activeProjId ? 'bg-slate-850 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-850 hover:text-white'
+              marketingView === 'campaigns' && !activeProjId && !selectedClient ? 'bg-slate-850 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-850 hover:text-white'
             }`}
           >
-            <LayoutDashboard size={13} /> My Campaigns
+            <LayoutDashboard size={13} /> My Client Accounts
           </button>
 
           <button
@@ -1585,9 +1626,9 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({
             <div className="flex items-center gap-4 mb-4">
               <button
                 onClick={() => setActiveProjId(null)}
-                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition shadow-sm"
+                className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
               >
-                <ArrowLeft size={12} /> Dashboard
+                <ArrowLeft size={12} /> {selectedClient ? 'Back to Campaigns' : 'All Client Accounts'}
               </button>
               <div className="h-4 w-px bg-slate-350"></div>
               <div>
@@ -1854,62 +1895,223 @@ const MarketingEmployeePanel: React.FC<MarketingEmployeePanelProps> = ({
               )}
             </div>
           </div>
-        ) : (
-          <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-slate-50">
-            <div>
-              <h2 className="text-lg font-black text-slate-900 tracking-tight">Assigned Marketing Campaigns</h2>
-              <p className="text-xs text-slate-400 font-medium">Access campaigns to submit report entries.</p>
+        ) : selectedClient ? (
+          /* ═══ LEVEL 2 — Inside Selected Client Account (Employee Panel) ═══ */
+          <div className="flex-1 p-6 overflow-y-auto space-y-6 bg-slate-50 animate-in fade-in duration-200">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-200">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedClient(null)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[11px] font-bold transition shadow-xs cursor-pointer"
+                >
+                  <ArrowLeft size={12} /> All Client Accounts
+                </button>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center shrink-0">
+                    <span className="text-white font-black text-sm">{(selectedClient.name || 'C')[0].toUpperCase()}</span>
+                  </div>
+                  <div>
+                    <h2 className="text-base font-black text-slate-900 leading-tight">{selectedClient.name}</h2>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      {selectedClient.companyName || 'Private Client'}
+                      {selectedClient.email ? ` · ${selectedClient.email}` : ''}
+                      {selectedClient.mobile ? ` · ${selectedClient.mobile}` : ''}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {myMarketingProjects.length === 0 ? (
-              <div className="bg-white border border-dashed border-slate-200 rounded-lg py-24 text-center">
-                <Layers className="text-slate-350 mx-auto mb-3" size={32} />
-                <p className="text-slate-400 text-sm font-bold uppercase">No Campaigns Allocated</p>
+            {(() => {
+              const clientAssignedProjects = myMarketingProjects.filter(p => p.clientId === selectedClient.id);
+              
+              if (clientAssignedProjects.length === 0) {
+                return (
+                  <div className="bg-white border border-dashed border-slate-200 rounded-2xl py-20 text-center space-y-2">
+                    <Layers className="text-slate-300 mx-auto" size={36} />
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">No Campaigns Assigned for this Client</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {clientAssignedProjects.map(proj => {
+                    const myAllocatedServices = (proj.servicesAllocated || [])
+                      .filter(s => s.assignedEmployeeId === employee.id)
+                      .map(s => s.serviceName);
+                    const isDone = proj.status === 'Completed' || proj.status === 'Closed';
+
+                    return (
+                      <div
+                        key={proj.id}
+                        className={`rounded-2xl border transition-all p-5 flex flex-col justify-between gap-5 relative group overflow-hidden ${
+                          isDone
+                            ? 'bg-slate-50/80 border-slate-200/90 opacity-75 hover:opacity-100'
+                            : 'bg-white border-slate-200 shadow-xs hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">Campaign</span>
+                            {isDone ? (
+                              <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                {proj.status === 'Closed' ? 'Closed' : 'Completed'}
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                                In Progress
+                              </span>
+                            )}
+                          </div>
+
+                          <div>
+                            <h4 className="text-base font-extrabold text-slate-900 leading-tight truncate">{proj.clientName}</h4>
+                            <p className="text-slate-500 mt-0.5 text-xs font-medium line-clamp-2">"{proj.description || 'Marketing campaign'}"</p>
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block">My Services</span>
+                            <div className="flex flex-wrap gap-1">
+                              {myAllocatedServices.map(name => (
+                                <span key={name} className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-750 text-[9px] rounded font-bold">
+                                  {name}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-150">
+                            <div>
+                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Campaign Start</span>
+                              <span className="text-xs font-bold text-slate-700">{proj.startDate}</span>
+                            </div>
+                            <div>
+                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Next Renewal</span>
+                              <span className="text-xs font-bold text-slate-700">{proj.deadline}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => { setActiveProjId(proj.id); setWorkspaceTab('services'); }}
+                          className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <Layers size={13} /> Open Workspace
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        ) : (
+          /* ═══ LEVEL 1 — Assigned Marketing Client Accounts View (Employee Panel) ═══ */
+          <div className="flex-1 p-6 overflow-y-auto space-y-6 bg-slate-50 animate-in fade-in duration-200">
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">Assigned Marketing Client Accounts</h2>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">Select a client account to view assigned marketing campaigns</p>
+            </div>
+
+            {myMarketingClients.length > 0 && (
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs max-w-sm">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                  <input
+                    type="text"
+                    placeholder="Search assigned client accounts..."
+                    value={clientSearchTerm}
+                    onChange={(e) => setClientSearchTerm(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs pl-8 pr-3 py-1.5 rounded-lg focus:outline-none focus:border-slate-900 focus:bg-white font-medium"
+                  />
+                </div>
+              </div>
+            )}
+
+            {sortedClients.length === 0 ? (
+              <div className="bg-white border border-slate-200/80 rounded-2xl p-16 text-center shadow-xs space-y-2">
+                <Building2 className="mx-auto text-slate-300 mb-1" size={44} />
+                <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider">No Client Accounts Assigned</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">You currently have no active or completed marketing campaigns assigned.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {myMarketingProjects.map(proj => {
-                  const myAllocatedServices = (proj.servicesAllocated || [])
-                    .filter(s => s.assignedEmployeeId === employee.id)
-                    .map(s => s.serviceName);
+              <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden divide-y divide-slate-100">
+                <div className="bg-slate-50 text-slate-500 font-bold text-[11px] uppercase tracking-wider px-6 py-3.5 grid grid-cols-12 gap-4 items-center border-b border-slate-200/60">
+                  <div className="col-span-4">Client Name / Company</div>
+                  <div className="col-span-3">Contact Email</div>
+                  <div className="col-span-2">Mobile / Phone</div>
+                  <div className="col-span-2">Assigned Campaigns</div>
+                  <div className="col-span-1 text-right">Action</div>
+                </div>
+
+                {sortedClients.map(client => {
+                  if (!client) return null;
+                  const clientProjs = myMarketingProjects.filter(p => p && p.clientId === client.id);
+                  const activeProjs = clientProjs.filter(p => p && p.status !== 'Completed' && p.status !== 'Closed');
+                  const completedProjs = clientProjs.filter(p => p && (p.status === 'Completed' || p.status === 'Closed'));
 
                   return (
-                    <div key={proj.id} className="bg-white rounded-lg border border-slate-200 shadow-sm hover:border-slate-350 transition-all p-5 flex flex-col justify-between gap-5 relative group overflow-hidden">
-                      <div className="space-y-3">
-                        <div>
-                          <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block mb-0.5">Target Account</span>
-                          <h4 className="text-base font-extrabold text-slate-900 leading-tight truncate">{proj.clientName}</h4>
+                    <div
+                      key={client.id}
+                      onClick={() => setSelectedClient(client)}
+                      className="px-6 py-4 grid grid-cols-12 gap-4 items-center transition-colors cursor-pointer hover:bg-slate-50/80 group"
+                    >
+                      <div className="col-span-4 flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs transition-colors ${
+                          activeProjs.length > 0
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-700 group-hover:bg-slate-900 group-hover:text-white'
+                        }`}>
+                          {client.name ? client.name.charAt(0).toUpperCase() : 'C'}
                         </div>
 
-                        <div className="space-y-1">
-                          <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 block">My Services</span>
-                          <div className="flex flex-wrap gap-1">
-                            {myAllocatedServices.map(name => (
-                              <span key={name} className="px-1.5 py-0.5 bg-slate-50 border border-slate-200 text-slate-750 text-[9px] rounded font-bold">
-                                {name}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 pt-1 border-t border-slate-100">
-                          <div>
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Campaign Start</span>
-                            <span className="text-xs font-bold text-slate-700">{proj.startDate}</span>
-                          </div>
-                          <div>
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Next Renewal</span>
-                            <span className="text-xs font-bold text-slate-700">{proj.deadline}</span>
-                          </div>
+                        <div className="truncate">
+                          <h3 className="text-xs font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors truncate">
+                            {client.name}
+                          </h3>
+                          <p className="text-[11px] text-slate-500 font-normal truncate">
+                            {client.companyName || 'Private Client'}
+                          </p>
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => { setActiveProjId(proj.id); setWorkspaceTab('services'); }}
-                        className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-sm"
-                      >
-                        Open Workspace
-                      </button>
+                      <div className="col-span-3 text-xs text-slate-700 font-medium truncate">
+                        {client.email ? client.email : <span className="text-slate-400 italic">No email</span>}
+                      </div>
+
+                      <div className="col-span-2 text-xs text-slate-600 truncate">
+                        {client.mobile ? client.mobile : <span className="text-slate-400 italic">No phone</span>}
+                      </div>
+
+                      <div className="col-span-2 flex items-center gap-1.5 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-md ${
+                          activeProjs.length > 0
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        }`}>
+                          {activeProjs.length} Active
+                        </span>
+
+                        {completedProjs.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {completedProjs.length} Done
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="col-span-1 text-right flex items-center justify-end">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedClient(client);
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors"
+                        >
+                          <span>Open</span>
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -2036,10 +2238,130 @@ const GenericEmployeePanel: React.FC<GenericEmployeePanelProps> = ({
     return myQuotes + activeOutbound + activeInbound;
   }, [quotations, activeDeals, inboundActiveDeals, employee.id, isSales]);
 
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-xs">
-      {/* Sidebar Navigation */}
-      <aside className="w-56 bg-[#0f172a] text-slate-300 flex flex-col border-r border-slate-800 shrink-0">
+    <div className="flex flex-col md:flex-row h-screen bg-slate-50 overflow-hidden font-sans text-xs">
+      {/* Mobile Top Header Bar */}
+      <header className="md:hidden bg-[#0f172a] text-white px-4 py-3 flex items-center justify-between border-b border-slate-800 shrink-0 shadow-md">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors cursor-pointer"
+            aria-label="Open menu"
+          >
+            <Menu size={20} />
+          </button>
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-extrabold text-xs text-white shadow-sm">
+              {employee.department ? employee.department.substring(0, 1).toUpperCase() : 'S'}
+            </div>
+            <div>
+              <h4 className="font-extrabold text-xs text-white leading-tight">{employee.name}</h4>
+              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">{employee.department} OP</span>
+            </div>
+          </div>
+        </div>
+        <span className="text-[10px] font-black bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider">
+          {currentView === 'internal_hub' ? 'Internal Hub' : currentView === 'quotations' ? 'Quotations' : 'Dashboard'}
+        </span>
+      </header>
+
+      {/* Mobile Slide-over Drawer Overlay */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          <aside className="relative w-72 max-w-[80vw] bg-[#0f172a] text-slate-300 flex flex-col h-full shadow-2xl z-10 p-5 space-y-4 animate-in slide-in-from-left duration-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-600 rounded-xl flex items-center justify-center font-black text-sm text-white shadow-md">
+                  {employee.department ? employee.department.substring(0, 1).toUpperCase() : 'S'}
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs text-white leading-none">{employee.name}</h4>
+                  <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block mt-1">{employee.department} OP</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg bg-slate-800 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <nav className="flex-1 space-y-1 overflow-y-auto">
+              <button
+                onClick={() => { setCurrentView('dashboard'); setIsMobileMenuOpen(false); }}
+                className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+                  currentView === 'dashboard' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <LayoutDashboard size={13} className={currentView === 'dashboard' ? 'text-white' : 'text-slate-400'} />
+                  <span>Dashboard</span>
+                </div>
+                {isSales && activeSalesCount > 0 && (
+                  <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                    {activeSalesCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => { setCurrentView('internal_hub'); setIsMobileMenuOpen(false); }}
+                className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+                  currentView === 'internal_hub' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Building2 size={13} className={currentView === 'internal_hub' ? 'text-white' : 'text-slate-400'} /> 
+                  <span>Internal Hub</span>
+                </div>
+                {hubBadgeCount > 0 && (
+                  <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                    {hubBadgeCount}
+                  </span>
+                )}
+              </button>
+
+              {isSales && (
+                <button
+                  onClick={() => { setCurrentView('quotations'); setIsMobileMenuOpen(false); }}
+                  className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-between gap-2 ${
+                    currentView === 'quotations' ? 'bg-indigo-700 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <FileText size={13} className={currentView === 'quotations' ? 'text-white' : 'text-slate-400'} />
+                    <span>Quotations</span>
+                  </div>
+                  {employeeQuotationsCount > 0 && (
+                    <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                      {employeeQuotationsCount}
+                    </span>
+                  )}
+                </button>
+              )}
+            </nav>
+
+            <div className="pt-3 border-t border-slate-800">
+              <button
+                onClick={() => { setIsMobileMenuOpen(false); onLogout(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-950/30 rounded-lg text-xs font-bold transition"
+              >
+                <LogOut size={13} /> Logout
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Desktop Sidebar Navigation */}
+      <aside className="hidden md:flex w-56 bg-[#0f172a] text-slate-300 flex-col border-r border-slate-800 shrink-0">
         <div className="p-5 flex flex-col items-start gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center shadow-lg">
             <span className="text-white font-extrabold text-sm">{employee.department.substring(0, 1).toUpperCase()}</span>
@@ -2133,7 +2455,7 @@ const GenericEmployeePanel: React.FC<GenericEmployeePanelProps> = ({
             />
           </div>
         ) : isSales ? (
-          <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-50">
             <SalesCRM
               leads={leads}
               setLeads={setLeads}

@@ -49,6 +49,17 @@ const LedgerView: React.FC<LedgerViewProps> = ({ journalEntries, categories }) =
         );
     }
 
+    // 4. Sort entries Latest First (LIFO order)
+    filteredEntries.sort((a, b) => {
+        const timeA = new Date(a.date).getTime();
+        const timeB = new Date(b.date).getTime();
+        if (timeB !== timeA) return timeB - timeA;
+        const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (createdB !== createdA) return createdB - createdA;
+        return (b.id || '').localeCompare(a.id || '');
+    });
+
     return (
         <div className="space-y-6">
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">

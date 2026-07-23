@@ -8,7 +8,6 @@ import {
   Database,
   Bell,
   Settings as SettingsIcon,
-  History as HistoryIcon,
   TrendingUp,
   AlertTriangle,
   CheckCircle2,
@@ -19,7 +18,8 @@ import {
   Video,
   Landmark,
   Megaphone,
-  Building2
+  Building2,
+  Receipt
 } from 'lucide-react';
 import { Section } from './types';
 
@@ -37,7 +37,7 @@ export const SIDEBAR_ITEMS = [
   { id: 'Notification', label: 'Notification', icon: <Bell size={20} /> },
   { id: 'Client DB', label: 'Client DB', icon: <Database size={20} /> },
   { id: 'Payments', label: 'Payments', icon: <Wallet size={20} /> },
-  { id: 'History', label: 'Work History', icon: <HistoryIcon size={20} /> },
+  { id: 'Invoices', label: 'Invoices', icon: <Receipt size={20} /> },
   { id: 'Accounts', label: 'Accounts / Finance', icon: <Landmark size={20} /> },
   { id: 'Settings', label: 'Settings', icon: <SettingsIcon size={20} /> },
 ] as const;

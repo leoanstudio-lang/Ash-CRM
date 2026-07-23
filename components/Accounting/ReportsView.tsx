@@ -1,512 +1,1083 @@
-import React, { useState, useMemo } from 'react';
-import { JournalEntry, AccountingCategory, AccountingAsset, AccountingLoan } from '../../types';
-import { calculateDepreciation } from '../../lib/accounting';
-import { PieChart, FileText, Download, TrendingUp, TrendingDown } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import { loadWatermarkBase64, stampWatermarkAllPages } from '../../lib/pdfWatermark';
-import * as XLSX from 'xlsx';
+import React, { useState, useMemo, useEffect } from 'react';
+import { JournalEntry, AccountingCategory, AccountingAsset, AccountingLoan, FinancialAccount, Vendor, CompanyProfile } from '../../types';
+import {
+  buildBalanceSheetStructure,
+  buildProfitAndLossStructure,
+  buildCashPositionStructure,
+  buildTrialBalanceStructure,
+  ReportGroup,
+} from '../../lib/reportMappingLayer';
+import {
+  ReportingContext,
+  getBalanceSheet,
+  getProfitAndLoss,
+  getCashPosition,
+  getGeneralLedger
+} from '../../lib/financialReportingEngine';
+import {
+  generateSingleFinancialReportPDF,
+  generateGenericReportPDF,
+  generateMasterFinancialPackagePDF,
+  FinancialReportData
+} from '../../lib/pdfReportEngine';
+import { getCompanyProfile } from '../../lib/db';
+import {
+  FileText, Calendar, Printer, CheckCircle2, AlertTriangle, ChevronDown, ChevronRight,
+  Filter, Search, ArrowUpRight, Wallet, Scale, BookOpen, Users, PieChart, BarChart3, TrendingUp, Download
+} from 'lucide-react';
 
 interface ReportsViewProps {
-    journalEntries: JournalEntry[];
-    categories: AccountingCategory[];
-    assets: AccountingAsset[];
-    loans: AccountingLoan[];
+  journalEntries?: JournalEntry[];
+  categories?: AccountingCategory[];
+  assets?: AccountingAsset[];
+  loans?: AccountingLoan[];
+  financialAccounts?: FinancialAccount[];
+  vendors?: Vendor[];
 }
 
-const ReportsView: React.FC<ReportsViewProps> = ({ journalEntries, categories, assets, loans }) => {
-    const [reportType, setReportType] = useState<'pnl' | 'balance_sheet' | 'cash_flow'>('pnl');
-    const [dateRange, setDateRange] = useState<'this_month' | 'last_month' | 'this_quarter' | 'half_year' | 'this_year' | 'all_time'>('this_year');
+type ActiveReportTab =
+  | 'balanceSheet'
+  | 'pnl'
+  | 'cashFlow'
+  | 'cashPosition'
+  | 'trialBalance'
+  | 'generalLedger'
+  | 'vendorReport'
+  | 'expenseAnalysis'
+  | 'revenueAnalysis';
 
-    // Helper to filter entries by date range
-    const filteredEntries = useMemo(() => {
-        let filtered = [...journalEntries];
-        const now = new Date();
+type PeriodPreset =
+  | 'thisMonth'
+  | 'thisQuarter'
+  | 'h1'
+  | 'h2'
+  | 'thisYear'
+  | 'lastMonth'
+  | 'lastQuarter'
+  | 'lastYear'
+  | 'custom';
 
-        if (dateRange === 'this_month') {
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            filtered = filtered.filter(e => new Date(e.date) >= startOfMonth);
-        } else if (dateRange === 'last_month') {
-            const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
-            filtered = filtered.filter(e => {
-                const d = new Date(e.date);
-                return d >= startOfLastMonth && d <= endOfLastMonth;
-            });
-        } else if (dateRange === 'this_year') {
-            const startOfYear = new Date(now.getFullYear(), 0, 1);
-            filtered = filtered.filter(e => new Date(e.date) >= startOfYear);
-        } else if (dateRange === 'this_quarter') {
-            const currentQuarter = Math.floor(now.getMonth() / 3);
-            const startOfQuarter = new Date(now.getFullYear(), currentQuarter * 3, 1);
-            filtered = filtered.filter(e => new Date(e.date) >= startOfQuarter);
-        } else if (dateRange === 'half_year') {
-            const currentMonth = now.getMonth();
-            const startMonth = currentMonth < 6 ? 0 : 6;
-            const startOfHalfYear = new Date(now.getFullYear(), startMonth, 1);
-            filtered = filtered.filter(e => new Date(e.date) >= startOfHalfYear);
-        }
-        return filtered;
-    }, [journalEntries, dateRange]);
+const ReportsView: React.FC<ReportsViewProps> = ({
+  journalEntries = [],
+  categories = [],
+  assets = [],
+  loans = [],
+  financialAccounts = [],
+  vendors = [],
+}) => {
+  // Navigation State
+  const [activeTab, setActiveTab] = useState<ActiveReportTab>('pnl');
 
-    // --- Profit & Loss Calculation ---
-    const pnlData = useMemo(() => {
-        const revenueByCat: Record<string, number> = {};
-        const expenseByCat: Record<string, number> = {};
-        let totalRevenue = 0;
-        let totalExpense = 0;
+  // Company Profile state for PDF export
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
 
-        filteredEntries.forEach(entry => {
-            if (entry.type === 'Revenue') {
-                entry.entries.forEach(line => {
-                    if (line.type === 'CREDIT') { // Revenue increases with Credit
-                        const cat = categories.find(c => c.id === line.accountId);
-                        if (cat && cat.type === 'Revenue') {
-                            revenueByCat[cat.name] = (revenueByCat[cat.name] || 0) + line.amount;
-                            totalRevenue += line.amount;
-                        }
-                    }
-                });
-            } else if (entry.type === 'Expense') {
-                entry.entries.forEach(line => {
-                    if (line.type === 'DEBIT') { // Expense increases with Debit
-                        const cat = categories.find(c => c.id === line.accountId);
-                        if (cat && cat.type === 'Expense') {
-                            expenseByCat[cat.name] = (expenseByCat[cat.name] || 0) + line.amount;
-                            totalExpense += line.amount;
-                        }
-                    }
-                });
-            }
-        });
+  useEffect(() => {
+    getCompanyProfile().then(setCompanyProfile).catch(console.error);
+  }, []);
 
-        // Calculate Depreciation Expense for the period (Simplified: total accumulated allocated to this period if we had specific dates, but for now we'll just show total accumulated up to now as an annualized figure or total to date. For a real P&L, it should be prorated by dateRange. For simplicity here, we'll exclude it from dynamic P&L unless we build a complex engine, but let's add a placeholder or simple calculation)
-        let depreciationExpense = 0;
-        const now = new Date();
-        assets.forEach(asset => {
-            const { accumulated } = calculateDepreciation(asset, now);
-            // Extremely simplified: we just take a flat monthly/yearly slice based on dateRange
-            // In a real app, this would be precise daily calculations based on date ranges.
-            if (dateRange === 'this_year') {
-                depreciationExpense += asset.cost / asset.usefulLifeYears;
-            } else if (dateRange === 'this_month' || dateRange === 'last_month') {
-                depreciationExpense += (asset.cost / asset.usefulLifeYears) / 12;
-            } else {
-                depreciationExpense += accumulated;
-            }
-        });
+  // Filter Panel Toggle State
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(false);
 
-        totalExpense += depreciationExpense;
-        expenseByCat['Depreciation'] = depreciationExpense;
+  // Advanced Filter States
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('thisMonth');
+  const [asOfDate, setAsOfDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
+  // Account & Category Database Filters
+  const [selectedAccountFilter, setSelectedAccountFilter] = useState<string>('All');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('All');
+
+  // General Ledger & Vendor Search States
+  const [glSearchTerm, setGlSearchTerm] = useState<string>('');
+  const [vendorSearch, setVendorSearch] = useState<string>('');
+
+  // Accordion Group Collapsed States
+  const [collapsedGroups, setCollapsedGroups] = useState<{ [groupId: string]: boolean }>({});
+
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  // Filtered Journal Entries based on selected Account & Category
+  const filteredJournalEntries = useMemo(() => {
+    return journalEntries.filter(entry => {
+      if (entry.isVoided) return false;
+
+      // Filter by Account
+      if (selectedAccountFilter !== 'All') {
+        const matchesAccount = entry.entries.some(line => line.accountId === selectedAccountFilter);
+        if (!matchesAccount) return false;
+      }
+
+      // Filter by Category
+      if (selectedCategoryFilter !== 'All') {
+        const matchesCat = entry.subType === selectedCategoryFilter || entry.type === selectedCategoryFilter;
+        if (!matchesCat) return false;
+      }
+
+      return true;
+    });
+  }, [journalEntries, selectedAccountFilter, selectedCategoryFilter]);
+
+  // Read-Only Reporting Context
+  const reportingContext: ReportingContext = useMemo(() => ({
+    journalEntries: filteredJournalEntries,
+    financialAccounts,
+    assets,
+    loans,
+    categories
+  }), [filteredJournalEntries, financialAccounts, assets, loans, categories]);
+
+  // Apply Period Presets (Month, Quarter, Half-Year, Year)
+  const applyPeriodPreset = (preset: PeriodPreset) => {
+    setPeriodPreset(preset);
+    const now = new Date();
+    let s = new Date();
+    let e = new Date();
+
+    if (preset === 'thisMonth') {
+      s = new Date(now.getFullYear(), now.getMonth(), 1);
+      e = now;
+    } else if (preset === 'thisQuarter') {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      s = new Date(now.getFullYear(), qMonth, 1);
+      e = now;
+    } else if (preset === 'h1') {
+      s = new Date(now.getFullYear(), 0, 1);
+      e = new Date(now.getFullYear(), 5, 30);
+    } else if (preset === 'h2') {
+      s = new Date(now.getFullYear(), 6, 1);
+      e = new Date(now.getFullYear(), 11, 31);
+    } else if (preset === 'thisYear') {
+      s = new Date(now.getFullYear(), 0, 1);
+      e = now;
+    } else if (preset === 'lastMonth') {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      e = new Date(now.getFullYear(), now.getMonth(), 0);
+    } else if (preset === 'lastQuarter') {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3 - 3;
+      s = new Date(now.getFullYear(), qMonth, 1);
+      e = new Date(now.getFullYear(), qMonth + 3, 0);
+    } else if (preset === 'lastYear') {
+      s = new Date(now.getFullYear() - 1, 0, 1);
+      e = new Date(now.getFullYear() - 1, 11, 31);
+    }
+
+    if (preset !== 'custom') {
+      setStartDate(s.toISOString().split('T')[0]);
+      setEndDate(e.toISOString().split('T')[0]);
+    }
+  };
+
+  // Formatter Utility
+  const formatCurrency = (amount: number, isNegative?: boolean) => {
+    const formatted = Math.abs(amount).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    if (isNegative || amount < 0) return `-₹${formatted}`;
+    return `₹${formatted}`;
+  };
+
+  const periodLabel = useMemo(() => {
+    if (activeTab === 'balanceSheet' || activeTab === 'cashPosition' || activeTab === 'trialBalance') {
+      return `As of ${new Date(asOfDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    }
+    return `${new Date(startDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${new Date(endDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }, [activeTab, asOfDate, startDate, endDate]);
+
+  const activeTabTitle = useMemo(() => {
+    switch (activeTab) {
+      case 'pnl': return 'Profit & Loss';
+      case 'balanceSheet': return 'Balance Sheet';
+      case 'cashFlow': return 'Cash Flow';
+      case 'cashPosition': return 'Cash Position';
+      case 'trialBalance': return 'Trial Balance';
+      case 'generalLedger': return 'General Ledger';
+      case 'vendorReport': return 'Vendor Summary';
+      case 'expenseAnalysis': return 'Expense Analysis';
+      case 'revenueAnalysis': return 'Revenue Analysis';
+      default: return 'Report';
+    }
+  }, [activeTab]);
+
+  // PDF Export Function for Active Report
+  const handleExportPDF = async () => {
+    try {
+      const nowCtx = new Date(asOfDate);
+      const startObj = new Date(startDate);
+      const endObj = new Date(endDate);
+
+      const bs = getBalanceSheet(reportingContext, nowCtx);
+      const pnl = getProfitAndLoss(reportingContext, startObj, endObj);
+      const cp = getCashPosition(reportingContext, nowCtx);
+
+      const pdfData: FinancialReportData = {
+        totalRevenue: pnl.totalRevenue,
+        totalOperationalExpenses: pnl.totalOperationalExpenses,
+        totalInterestExpenses: pnl.totalInterestExpenses,
+        netProfit: pnl.netProfit,
+        bankAndCashBalance: cp.bankAndCashBalance,
+        totalFixedAssetBookValue: bs.assets.fixedAssetsBookValue,
+        totalSecurityDeposits: bs.assets.securityDeposits,
+        totalAssets: bs.assets.totalAssets,
+        totalOutstandingLoans: bs.liabilities.totalLiabilities,
+        openingCapital: bs.ownerEquity.openingCapital,
+        additionalCapital: bs.ownerEquity.additionalCapital,
+        totalOwnerCapital: bs.ownerEquity.openingCapital + bs.ownerEquity.additionalCapital,
+        totalOwnerDrawings: bs.ownerEquity.ownerDrawings,
+        retainedEarnings: bs.ownerEquity.retainedEarnings,
+        totalCurrentOwnerEquity: bs.ownerEquity.totalCurrentOwnerEquity,
+        netEquity: bs.ownerEquity.totalCurrentOwnerEquity,
+        expenseByCategory: pnl.expenseByCategory
+      };
+
+      if (activeTab === 'balanceSheet') {
+        await generateSingleFinancialReportPDF('balanceSheet', periodLabel, companyProfile, pdfData);
+      } else if (activeTab === 'pnl') {
+        await generateSingleFinancialReportPDF('pnl', periodLabel, companyProfile, pdfData);
+      } else if (activeTab === 'cashPosition') {
+        await generateSingleFinancialReportPDF('cashPosition', periodLabel, companyProfile, pdfData);
+      } else if (activeTab === 'expenseAnalysis') {
+        await generateSingleFinancialReportPDF('expenses', periodLabel, companyProfile, pdfData);
+      } else if (activeTab === 'trialBalance') {
+        const tb = buildTrialBalanceStructure(reportingContext, nowCtx);
+        const head = [['Account Particulars', 'Debit (Rs.)', 'Credit (Rs.)']];
+        const body = tb.sections.flatMap(s => s.groups.flatMap(g => (g.items || []).map(i => [
+          i.name,
+          i.type === 'DEBIT' ? `Rs. ${i.amount.toLocaleString('en-IN')}` : '-',
+          i.type === 'CREDIT' ? `Rs. ${i.amount.toLocaleString('en-IN')}` : '-'
+        ])));
+        body.push(['TOTALS', `Rs. ${tb.sections[0]?.total.toLocaleString('en-IN')}`, `Rs. ${tb.sections[1]?.total.toLocaleString('en-IN')}`]);
+        await generateGenericReportPDF('Trial Balance', periodLabel, companyProfile, head, body);
+      } else if (activeTab === 'cashFlow') {
+        const head = [['Cash Flow Particulars', 'Amount (Rs.)']];
+        const body = [
+          ['OPERATING ACTIVITIES', ''],
+          ['   Cash Received from Customers', `Rs. ${pnl.totalRevenue.toLocaleString('en-IN')}`],
+          ['   Operating Expenses Paid', `- Rs. ${pnl.totalOperationalExpenses.toLocaleString('en-IN')}`],
+          ['   Interest Paid', `- Rs. ${pnl.totalInterestExpenses.toLocaleString('en-IN')}`],
+          ['NET CASH FROM OPERATING ACTIVITIES', `Rs. ${pnl.netProfit.toLocaleString('en-IN')}`],
+          ['CLOSING CASH BALANCE', `Rs. ${cp.bankAndCashBalance.toLocaleString('en-IN')}`]
+        ];
+        await generateGenericReportPDF('Cash Flow Statement', periodLabel, companyProfile, head, body);
+      } else if (activeTab === 'generalLedger') {
+        const gl = getGeneralLedger(reportingContext, { startDate: startObj, endDate: endObj });
+        const head = [['Date', 'Voucher ID', 'Description', 'Type', 'Amount (Rs.)']];
+        const body = gl.entries.map(e => [
+          new Date(e.date).toLocaleDateString('en-GB'),
+          e.id.slice(0, 8),
+          e.remarks || '-',
+          e.subType || e.type,
+          `Rs. ${(e.entries.reduce((sum, line) => sum + line.amount, 0) / 2).toLocaleString('en-IN')}`
+        ]);
+        await generateGenericReportPDF('General Ledger', periodLabel, companyProfile, head, body);
+      } else if (activeTab === 'vendorReport') {
+        const head = [['Vendor Name', 'Total Purchases / Payments (Rs.)']];
+        const body = Object.entries(pnl.expenseByCategory).map(([cat, amt]) => [cat, `Rs. ${amt.toLocaleString('en-IN')}`]);
+        await generateGenericReportPDF('Vendor Summary Report', periodLabel, companyProfile, head, body);
+      } else {
+        const head = [['Service / Category', 'Amount (Rs.)']];
+        const body = Object.entries(pnl.revenueByCategory).map(([cat, amt]) => [cat, `Rs. ${amt.toLocaleString('en-IN')}`]);
+        await generateGenericReportPDF('Revenue Analysis', periodLabel, companyProfile, head, body);
+      }
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      alert('Failed to generate PDF: ' + (err?.message || err));
+    }
+  };
+
+  // PDF Export Function for All Reports Master Package
+  const handleExportMasterPDF = async () => {
+    try {
+      const nowCtx = new Date(asOfDate);
+      const startObj = new Date(startDate);
+      const endObj = new Date(endDate);
+
+      const bs = getBalanceSheet(reportingContext, nowCtx);
+      const pnl = getProfitAndLoss(reportingContext, startObj, endObj);
+      const cp = getCashPosition(reportingContext, nowCtx);
+      const tb = buildTrialBalanceStructure(reportingContext, nowCtx);
+      const gl = getGeneralLedger(reportingContext, { startDate: startObj, endDate: endObj });
+
+      const tbItems = tb.sections[0]?.groups[0]?.items?.map((debitItem, idx) => {
+        const creditItem = tb.sections[1]?.groups[0]?.items?.[idx];
         return {
-            revenueByCat,
-            expenseByCat,
-            totalRevenue,
-            totalExpense,
-            netProfit: totalRevenue - totalExpense
+          name: debitItem.name,
+          debit: debitItem.amount || 0,
+          credit: creditItem?.amount || 0
         };
-    }, [filteredEntries, categories, assets, dateRange]);
+      }) || [];
 
-    // --- Balance Sheet Calculation ---
-    const balanceSheetData = useMemo(() => {
-        // Balance sheet is a snapshot in time. Usually 'as of today' or 'end of period'.
-        // For simplicity, we calculate balances based on ALL entries up to the end of the selected period.
-        // E.g., if 'this_year', it's up to today. If 'last_month', up to end of last month.
+      const glEntries = gl.entries.map(e => ({
+        date: new Date(e.date).toLocaleDateString('en-GB'),
+        voucher: e.id.slice(0, 8),
+        type: e.subType || e.type,
+        remarks: e.remarks || '-',
+        debit: e.entries.reduce((sum, line) => sum + line.amount, 0),
+        credit: e.entries.reduce((sum, line) => sum + line.amount, 0)
+      }));
 
-        const balances: Record<string, number> = {};
+      const vSummaries = vendorReportData.map(v => ({
+        name: v.name,
+        count: v.count,
+        lastDate: new Date(v.lastDate).toLocaleDateString('en-GB'),
+        totalPurchases: v.totalPurchases
+      }));
 
-        // Initialize with categories
-        categories.forEach(c => balances[c.id] = 0);
+      const pdfData: FinancialReportData = {
+        totalRevenue: pnl.totalRevenue,
+        totalOperationalExpenses: pnl.totalOperationalExpenses,
+        totalInterestExpenses: pnl.totalInterestExpenses,
+        netProfit: pnl.netProfit,
+        bankAndCashBalance: cp.bankAndCashBalance,
+        totalFixedAssetBookValue: bs.assets.fixedAssetsBookValue,
+        totalSecurityDeposits: bs.assets.securityDeposits,
+        totalAssets: bs.assets.totalAssets,
+        totalOutstandingLoans: bs.liabilities.totalLiabilities,
+        openingCapital: bs.ownerEquity.openingCapital,
+        additionalCapital: bs.ownerEquity.additionalCapital,
+        totalOwnerCapital: bs.ownerEquity.openingCapital + bs.ownerEquity.additionalCapital,
+        totalOwnerDrawings: bs.ownerEquity.ownerDrawings,
+        retainedEarnings: bs.ownerEquity.retainedEarnings,
+        totalCurrentOwnerEquity: bs.ownerEquity.totalCurrentOwnerEquity,
+        netEquity: bs.ownerEquity.totalCurrentOwnerEquity,
+        expenseByCategory: pnl.expenseByCategory,
+        revenueByCategory: pnl.revenueByCategory,
+        cashFlow: cashFlowData,
+        trialBalanceItems: tbItems,
+        generalLedgerEntries: glEntries,
+        vendorSummaries: vSummaries
+      };
 
-        const targetDate = new Date(); // To be strict, this should adjust based on dateRange (e.g. end of last month). We assume 'as of today' for this quick demo.
+      await generateMasterFinancialPackagePDF(periodLabel, companyProfile, pdfData);
+    } catch (err: any) {
+      console.error('Master PDF package export error:', err);
+      alert('Failed to generate Master PDF package: ' + (err?.message || err));
+    }
+  };
 
-        const allEntriesUpToTarget = journalEntries; // Simplified
-
-        allEntriesUpToTarget.forEach(entry => {
-            entry.entries.forEach(line => {
-                const cat = categories.find(c => c.id === line.accountId);
-                if (!cat) return;
-
-                // Asset & Expense increase with Debit
-                // Liability, Equity, Revenue increase with Credit
-                if (cat.type === 'Asset' || cat.type === 'Expense') {
-                    if (line.type === 'DEBIT') balances[line.accountId] += line.amount;
-                    if (line.type === 'CREDIT') balances[line.accountId] -= line.amount;
-                } else {
-                    if (line.type === 'CREDIT') balances[line.accountId] += line.amount;
-                    if (line.type === 'DEBIT') balances[line.accountId] -= line.amount;
-                }
-            });
-        });
-
-        const assetsItems: { name: string, balance: number }[] = [];
-        const liabilitiesItems: { name: string, balance: number }[] = [];
-        const equityItems: { name: string, balance: number }[] = [];
-
-        let totalAssets = 0;
-        let totalLiabilities = 0;
-        let totalEquity = 0;
-
-        // Group Account Balances
-        categories.forEach(cat => {
-            const bal = balances[cat.id];
-            if (bal !== 0) {
-                if (cat.type === 'Asset') {
-                    assetsItems.push({ name: cat.name, balance: bal });
-                    totalAssets += bal;
-                }
-                if (cat.type === 'Liability') {
-                    liabilitiesItems.push({ name: cat.name, balance: bal });
-                    totalLiabilities += bal;
-                }
-                if (cat.type === 'Equity') {
-                    equityItems.push({ name: cat.name, balance: bal });
-                    totalEquity += bal;
-                }
-            }
-        });
-
-        // Add Fixed Assets Net Book Value
-        let fixedAssetsNBV = 0;
-        assets.forEach(asset => {
-            const { currentValue } = calculateDepreciation(asset, targetDate);
-            fixedAssetsNBV += currentValue;
-        });
-        if (fixedAssetsNBV > 0) {
-            assetsItems.push({ name: 'Fixed Assets (Net)', balance: fixedAssetsNBV });
-            totalAssets += fixedAssetsNBV;
-        }
-
-        // Compute Net Income to drop into Equity
-        // Note: A true balance sheet would roll over prior years' retained earnings.
-        // This is dynamic. We use the full PNL net profit across ALL TIME.
-        let allTimeRevenue = 0;
-        let allTimeExpense = 0;
-        allEntriesUpToTarget.forEach(entry => {
-            entry.entries.forEach(line => {
-                const cat = categories.find(c => c.id === line.accountId);
-                if (cat?.type === 'Revenue' && line.type === 'CREDIT') allTimeRevenue += line.amount;
-                if (cat?.type === 'Expense' && line.type === 'DEBIT') allTimeExpense += line.amount;
-            });
-        });
-
-        let allTimeDepreciation = 0;
-        assets.forEach(a => {
-            const { accumulated } = calculateDepreciation(a, targetDate);
-            allTimeDepreciation += accumulated;
-        });
-
-        const netIncome = allTimeRevenue - (allTimeExpense + allTimeDepreciation);
-        if (netIncome !== 0) {
-            equityItems.push({ name: 'Retained Earnings (Net Income)', balance: netIncome });
-            totalEquity += netIncome;
-        }
-
-        return {
-            assetsItems,
-            liabilitiesItems,
-            equityItems,
-            totalAssets,
-            totalLiabilitiesAndEquity: totalLiabilities + totalEquity
-        };
-
-    }, [journalEntries, categories, assets, loans]);
-
-
-    const renderPNL = () => (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 max-w-4xl mx-auto animate-in fade-in">
-            <div className="text-center mb-8 border-b border-slate-200 pb-8">
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Income Statement</h2>
-                <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest">{dateRange.replace('_', ' ')}</p>
-            </div>
-
-            <div className="space-y-8">
-                {/* Revenue Section */}
-                <div>
-                    <h3 className="text-sm font-black uppercase tracking-widest text-emerald-600 mb-4 border-b border-slate-50 pb-2">Revenue</h3>
-                    <div className="space-y-2">
-                        {Object.entries(pnlData.revenueByCat).map(([name, amount]) => (
-                            <div key={name} className="flex justify-between text-sm py-1 font-bold text-slate-700">
-                                <span>{name}</span>
-                                <span>₹{amount.toLocaleString()}</span>
-                            </div>
-                        ))}
-                        {Object.keys(pnlData.revenueByCat).length === 0 && <p className="text-xs text-slate-400 italic">No revenue for this period</p>}
-                    </div>
-                    <div className="flex justify-between font-black text-slate-900 mt-4 pt-2 border-t border-slate-100">
-                        <span>Total Revenue</span>
-                        <span>₹{pnlData.totalRevenue.toLocaleString()}</span>
-                    </div>
-                </div>
-
-                {/* Expense Section */}
-                <div>
-                    <h3 className="text-sm font-black uppercase tracking-widest text-red-600 mb-4 border-b border-slate-50 pb-2">Operating Expenses</h3>
-                    <div className="space-y-2">
-                        {Object.entries(pnlData.expenseByCat).map(([name, amount]) => (
-                            <div key={name} className="flex justify-between text-sm py-1 font-bold text-slate-700">
-                                <span>{name}</span>
-                                <span>₹{amount.toLocaleString()}</span>
-                            </div>
-                        ))}
-                        {Object.keys(pnlData.expenseByCat).length === 0 && <p className="text-xs text-slate-400 italic">No expenses for this period</p>}
-                    </div>
-                    <div className="flex justify-between font-black text-slate-900 mt-4 pt-2 border-t border-slate-100">
-                        <span>Total Expenses</span>
-                        <span>₹{pnlData.totalExpense.toLocaleString()}</span>
-                    </div>
-                </div>
-
-                {/* Net Profit */}
-                <div className={`mt-8 p-6 rounded-2xl flex justify-between items-center ${pnlData.netProfit >= 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
-                    <span className="font-black uppercase tracking-widest text-sm">Net Profit (Loss)</span>
-                    <span className="font-black text-2xl">₹{pnlData.netProfit.toLocaleString()}</span>
-                </div>
-            </div>
-        </div>
-    );
-
-    const renderBalanceSheet = () => (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 max-w-4xl mx-auto animate-in fade-in">
-            <div className="text-center mb-8 border-b border-slate-200 pb-8">
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Balance Sheet</h2>
-                <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest">As of {new Date().toLocaleDateString()}</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                {/* Assets Section */}
-                <div>
-                    <h3 className="text-lg font-black text-slate-900 border-b border-slate-200 pb-2 mb-4">Assets</h3>
-                    <div className="space-y-2">
-                        {balanceSheetData.assetsItems.map(item => (
-                            <div key={item.name} className="flex justify-between text-sm py-1 font-bold text-slate-700">
-                                <span>{item.name}</span>
-                                <span>₹{item.balance.toLocaleString()}</span>
-                            </div>
-                        ))}
-                        {balanceSheetData.assetsItems.length === 0 && <p className="text-xs text-slate-400 italic">No assets recorded</p>}
-                    </div>
-                    <div className="flex justify-between font-black text-slate-900 mt-6 pt-2 border-t-2 border-slate-900">
-                        <span>Total Assets</span>
-                        <span>₹{balanceSheetData.totalAssets.toLocaleString()}</span>
-                    </div>
-                </div>
-
-                {/* Liabilities & Equity Section */}
-                <div>
-                    <h3 className="text-lg font-black text-slate-900 border-b border-slate-200 pb-2 mb-4">Liabilities & Equity</h3>
-
-                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2 mt-4">Liabilities</h4>
-                    <div className="space-y-2">
-                        {balanceSheetData.liabilitiesItems.map(item => (
-                            <div key={item.name} className="flex justify-between text-sm py-1 font-bold text-slate-700">
-                                <span>{item.name}</span>
-                                <span>₹{item.balance.toLocaleString()}</span>
-                            </div>
-                        ))}
-                        {balanceSheetData.liabilitiesItems.length === 0 && <p className="text-xs text-slate-400 italic mb-4">No liabilities recorded</p>}
-                    </div>
-
-                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-2 mt-6">Equity</h4>
-                    <div className="space-y-2">
-                        {balanceSheetData.equityItems.map(item => (
-                            <div key={item.name} className="flex justify-between text-sm py-1 font-bold text-slate-700">
-                                <span>{item.name}</span>
-                                <span>₹{item.balance.toLocaleString()}</span>
-                            </div>
-                        ))}
-                        {balanceSheetData.equityItems.length === 0 && <p className="text-xs text-slate-400 italic mb-4">No equity recorded</p>}
-                    </div>
-
-                    <div className="flex justify-between font-black text-slate-900 mt-6 pt-2 border-t-2 border-slate-900">
-                        <span>Total Liabilities & Equity</span>
-                        <span>₹{balanceSheetData.totalLiabilitiesAndEquity.toLocaleString()}</span>
-                    </div>
-                </div>
-            </div>
-
-            <div className="mt-8 pt-4 border-t border-slate-100 flex justify-center">
-                <span className={`text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full ${Math.abs(balanceSheetData.totalAssets - balanceSheetData.totalLiabilitiesAndEquity) < 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                    {Math.abs(balanceSheetData.totalAssets - balanceSheetData.totalLiabilitiesAndEquity) < 1 ? 'Balances Match ✓' : 'Out of Balance ✕'}
-                </span>
-            </div>
-        </div>
-    );
-
-    const renderCashFlow = () => (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 max-w-4xl mx-auto animate-in fade-in flex flex-col items-center justify-center min-h-[400px]">
-            <TrendingUp size={48} className="text-blue-100 mb-4" />
-            <h2 className="text-2xl font-black text-slate-900 tracking-tight">Statement of Cash Flows</h2>
-            <p className="text-slate-500 font-bold mt-2 text-center max-w-sm">This specific report is currently being generated by summarizing Bank and UPI ledger activities. Available in next update.</p>
-        </div>
-    );
-
-    const handleExportPDF = async () => {
-        const doc = new jsPDF();
-        doc.setFontSize(20);
-        doc.text(`${reportType === 'pnl' ? 'Income Statement' : 'Balance Sheet'}`, 14, 22);
-        doc.setFontSize(10);
-        doc.text(`Period: ${dateRange.replace('_', ' ').toUpperCase()}`, 14, 30);
-
-        let startYVal = 40;
-
-        if (reportType === 'pnl') {
-            const revData = Object.entries(pnlData.revenueByCat).map(([k, v]) => [k, `Rs. ${v.toLocaleString()}`]);
-            const expData = Object.entries(pnlData.expenseByCat).map(([k, v]) => [k, `Rs. ${v.toLocaleString()}`]);
-
-            autoTable(doc, {
-                startY: startYVal,
-                head: [['Revenue Category', 'Amount']],
-                body: [...revData, ['Total Revenue', `Rs. ${pnlData.totalRevenue.toLocaleString()}`]],
-                theme: 'grid'
-            });
-
-            autoTable(doc, {
-                startY: (doc as any).lastAutoTable.finalY + 10,
-                head: [['Expense Category', 'Amount']],
-                body: [...expData, ['Total Expenses', `Rs. ${pnlData.totalExpense.toLocaleString()}`]],
-                theme: 'grid'
-            });
-
-            autoTable(doc, {
-                startY: (doc as any).lastAutoTable.finalY + 10,
-                head: [['Net Profit', `Rs. ${pnlData.netProfit.toLocaleString()}`]],
-                theme: 'grid',
-                headStyles: { fillColor: pnlData.netProfit >= 0 ? [16, 185, 129] : [239, 68, 68] }
-            });
-
-        } else if (reportType === 'balance_sheet') {
-            const astData = balanceSheetData.assetsItems.map(i => [i.name, `Rs. ${i.balance.toLocaleString()}`]);
-            const liaData = balanceSheetData.liabilitiesItems.map(i => [i.name, `Rs. ${i.balance.toLocaleString()}`]);
-            const eqData = balanceSheetData.equityItems.map(i => [i.name, `Rs. ${i.balance.toLocaleString()}`]);
-
-            autoTable(doc, {
-                startY: startYVal,
-                head: [['Assets', 'Amount']],
-                body: [...astData, ['Total Assets', `Rs. ${balanceSheetData.totalAssets.toLocaleString()}`]],
-                theme: 'grid'
-            });
-
-            autoTable(doc, {
-                startY: (doc as any).lastAutoTable.finalY + 10,
-                head: [['Liabilities', 'Amount']],
-                body: liaData.length > 0 ? [...liaData, ['Total Liabilities', `Rs. ${balanceSheetData.liabilitiesItems.reduce((acc, i) => acc + i.balance, 0).toLocaleString()}`]] : [['No liabilities', '-']],
-                theme: 'grid'
-            });
-
-            autoTable(doc, {
-                startY: (doc as any).lastAutoTable.finalY + 10,
-                head: [['Equity', 'Amount']],
-                body: [...eqData, ['Total L&E', `Rs. ${balanceSheetData.totalLiabilitiesAndEquity.toLocaleString()}`]],
-                theme: 'grid'
-            });
-        }
-
-        // Stamp watermark on all pages before saving
-        const watermarkB64 = await loadWatermarkBase64();
-        stampWatermarkAllPages(doc, watermarkB64);
-
-        doc.save(`${reportType}_${dateRange}.pdf`);
-    };
-
-    const handleExportExcel = () => {
-        let wb = XLSX.utils.book_new();
-        let wsData: any[][] = [];
-
-        if (reportType === 'pnl') {
-            wsData.push(['INCOME STATEMENT', `Period: ${dateRange}`]);
-            wsData.push([]);
-            wsData.push(['REVENUE']);
-            Object.entries(pnlData.revenueByCat).forEach(([k, v]) => wsData.push([k, v]));
-            wsData.push(['Total Revenue', pnlData.totalRevenue]);
-            wsData.push([]);
-            wsData.push(['EXPENSES']);
-            Object.entries(pnlData.expenseByCat).forEach(([k, v]) => wsData.push([k, v]));
-            wsData.push(['Total Expenses', pnlData.totalExpense]);
-            wsData.push([]);
-            wsData.push(['NET PROFIT (LOSS)', pnlData.netProfit]);
-        } else if (reportType === 'balance_sheet') {
-            wsData.push(['BALANCE SHEET', `As of: ${new Date().toLocaleDateString()}`]);
-            wsData.push([]);
-            wsData.push(['ASSETS']);
-            balanceSheetData.assetsItems.forEach(i => wsData.push([i.name, i.balance]));
-            wsData.push(['Total Assets', balanceSheetData.totalAssets]);
-            wsData.push([]);
-            wsData.push(['LIABILITIES']);
-            balanceSheetData.liabilitiesItems.forEach(i => wsData.push([i.name, i.balance]));
-            wsData.push([]);
-            wsData.push(['EQUITY']);
-            balanceSheetData.equityItems.forEach(i => wsData.push([i.name, i.balance]));
-            wsData.push(['Total Liabilities & Equity', balanceSheetData.totalLiabilitiesAndEquity]);
-        }
-
-        const ws = XLSX.utils.aoa_to_sheet(wsData);
-        XLSX.utils.book_append_sheet(wb, ws, 'Report');
-        XLSX.writeFile(wb, `${reportType}_${dateRange}.xlsx`);
-    };
+  // Render Minimal Accordion Group Helper
+  const renderGroup = (group: ReportGroup, depth: number = 0) => {
+    const isCollapsed = !!collapsedGroups[group.id];
+    const hasItems = group.items && group.items.length > 0;
+    const hasSubGroups = group.subGroups && group.subGroups.length > 0;
 
     return (
-        <div className="space-y-6">
-            {/* Actions */}
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                <div className="flex gap-2 p-1 bg-slate-50 rounded-lg w-full md:w-auto">
-                    <button
-                        onClick={() => setReportType('pnl')}
-                        className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${reportType === 'pnl' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Income Statement
-                    </button>
-                    <button
-                        onClick={() => setReportType('balance_sheet')}
-                        className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${reportType === 'balance_sheet' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Balance Sheet
-                    </button>
-                    <button
-                        onClick={() => setReportType('cash_flow')}
-                        className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${reportType === 'cash_flow' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Cash Flow
-                    </button>
-                </div>
-
-                <div className="flex gap-3 w-full md:w-auto flex-wrap md:flex-nowrap">
-                    <select
-                        value={dateRange}
-                        onChange={(e) => setDateRange(e.target.value as any)}
-                        className="flex-1 md:flex-none px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 outline-none"
-                    >
-                        <option value="this_month">This Month</option>
-                        <option value="last_month">Last Month</option>
-                        <option value="this_quarter">This Quarter</option>
-                        <option value="half_year">Half Year</option>
-                        <option value="this_year">This Year</option>
-                        <option value="all_time">All Time</option>
-                    </select>
-
-                    {reportType !== 'cash_flow' && (
-                        <div className="flex gap-2">
-                            <button onClick={handleExportPDF} className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 border border-slate-200 text-slate-700 rounded-lg shadow-sm hover:bg-slate-200 transition font-semibold text-sm h-full">
-                                <Download size={16} /> PDF
-                            </button>
-                            <button onClick={handleExportExcel} className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-lg shadow-sm hover:bg-emerald-200 transition font-semibold text-sm h-full">
-                                <FileText size={16} /> Excel
-                            </button>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Report Container */}
-            <div className="bg-slate-50 rounded-2xl p-4 md:p-8 border border-slate-200">
-                {reportType === 'pnl' && renderPNL()}
-                {reportType === 'balance_sheet' && renderBalanceSheet()}
-                {reportType === 'cash_flow' && renderCashFlow()}
-            </div>
-
+      <div key={group.id} className="space-y-1">
+        <div
+          onClick={() => toggleGroup(group.id)}
+          className={`flex items-center justify-between py-2 px-3 rounded-lg cursor-pointer transition-colors ${
+            depth === 0 ? 'bg-slate-100/90 hover:bg-slate-200/70 font-bold text-slate-900' : 'bg-slate-50 hover:bg-slate-100 text-slate-800 font-semibold'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {(hasItems || hasSubGroups) ? (
+              isCollapsed ? <ChevronRight size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />
+            ) : (
+              <div className="w-3.5" />
+            )}
+            <span className="text-xs uppercase tracking-tight">{group.title}</span>
+          </div>
+          <span className="text-xs font-bold text-slate-900">{formatCurrency(group.total)}</span>
         </div>
+
+        {!isCollapsed && (
+          <div className="pl-4 space-y-1">
+            {hasSubGroups && group.subGroups!.map(sg => renderGroup(sg, depth + 1))}
+            {hasItems && (
+              <div className="divide-y divide-slate-100 bg-white rounded-lg border border-slate-200 overflow-hidden">
+                {group.items!.map(item => (
+                  <div key={item.id} className="flex justify-between items-center px-3 py-2 text-xs hover:bg-slate-50/50 transition">
+                    <span className="text-slate-700 font-medium">{item.name}</span>
+                    <span className={`font-semibold ${item.isNegative || item.amount < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                      {formatCurrency(item.amount, item.isNegative)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     );
+  };
+
+  // DATA COMPUTATIONS
+  const balanceSheetStructure = useMemo(() => buildBalanceSheetStructure(reportingContext, new Date(asOfDate)), [reportingContext, asOfDate]);
+  const pnlStructure = useMemo(() => buildProfitAndLossStructure(reportingContext, new Date(startDate), new Date(endDate)), [reportingContext, startDate, endDate]);
+  const cashPositionStructure = useMemo(() => buildCashPositionStructure(reportingContext, new Date(asOfDate)), [reportingContext, asOfDate]);
+  const trialBalanceStructure = useMemo(() => buildTrialBalanceStructure(reportingContext, new Date(asOfDate)), [reportingContext, asOfDate]);
+
+  const generalLedgerData = useMemo(() => getGeneralLedger(reportingContext, {
+    startDate: new Date(startDate),
+    endDate: new Date(endDate),
+    searchTerm: glSearchTerm.trim() || undefined
+  }), [reportingContext, startDate, endDate, glSearchTerm]);
+
+  // Cash Flow Computations
+  const cashFlowData = useMemo(() => {
+    const pnl = getProfitAndLoss(reportingContext, new Date(startDate), new Date(endDate));
+    const cp = getCashPosition(reportingContext, new Date(endDate));
+
+    const netOperatingCash = pnl.totalRevenue - pnl.totalOperationalExpenses - pnl.totalInterestExpenses;
+    const assetPurchases = filteredJournalEntries
+      .filter(j => j.subType === 'Fixed Asset Purchase' && new Date(j.date) >= new Date(startDate) && new Date(j.date) <= new Date(endDate))
+      .reduce((sum, j) => sum + (j.entries.find(e => e.type === 'DEBIT')?.amount || 0), 0);
+
+    const capitalInflows = filteredJournalEntries
+      .filter(j => (j.subType === 'Owner Investment' || (j.subType === 'Opening Balance' && j.type === 'Capital')) && new Date(j.date) >= new Date(startDate) && new Date(j.date) <= new Date(endDate))
+      .reduce((sum, j) => sum + (j.entries.find(e => e.type === 'CREDIT')?.amount || 0), 0);
+
+    const withdrawals = filteredJournalEntries
+      .filter(j => j.subType === 'Owner Withdrawal' && new Date(j.date) >= new Date(startDate) && new Date(j.date) <= new Date(endDate))
+      .reduce((sum, j) => sum + (j.entries.find(e => e.type === 'DEBIT')?.amount || 0), 0);
+
+    const netFinancingCash = capitalInflows - withdrawals;
+    const closingCash = cp.bankAndCashBalance;
+    const openingCash = closingCash - (netOperatingCash - assetPurchases + netFinancingCash);
+
+    return {
+      operatingInflows: pnl.totalRevenue,
+      operatingOutflows: pnl.totalOperationalExpenses,
+      interestOutflows: pnl.totalInterestExpenses,
+      netOperatingCash,
+      assetPurchases,
+      capitalInflows,
+      withdrawals,
+      netFinancingCash,
+      openingCash,
+      closingCash
+    };
+  }, [reportingContext, startDate, endDate, filteredJournalEntries]);
+
+  // Vendor & Analysis Data
+  const vendorReportData = useMemo(() => {
+    const vendorMap: { [name: string]: { name: string; totalPurchases: number; lastDate: string; count: number } } = {};
+    filteredJournalEntries.forEach(j => {
+      const vName = j.vendor || (j.type === 'Expense' ? 'General Vendor' : undefined);
+      if (!vName) return;
+      const amt = j.entries.reduce((sum, line) => line.type === 'DEBIT' ? sum + line.amount : sum, 0);
+      if (!vendorMap[vName]) vendorMap[vName] = { name: vName, totalPurchases: 0, lastDate: j.date, count: 0 };
+      vendorMap[vName].totalPurchases += amt;
+      vendorMap[vName].count += 1;
+      if (new Date(j.date).getTime() > new Date(vendorMap[vName].lastDate).getTime()) vendorMap[vName].lastDate = j.date;
+    });
+    return Object.values(vendorMap).filter(v => !vendorSearch || v.name.toLowerCase().includes(vendorSearch.toLowerCase()));
+  }, [filteredJournalEntries, vendorSearch]);
+
+  const expenseAnalysisData = useMemo(() => {
+    const pnl = getProfitAndLoss(reportingContext, new Date(startDate), new Date(endDate));
+    const totalExp = pnl.totalOperationalExpenses + pnl.totalInterestExpenses;
+    const categoryList = Object.entries(pnl.expenseByCategory).map(([name, amount]) => ({
+      name,
+      amount,
+      percentage: totalExp > 0 ? (amount / totalExp) * 100 : 0
+    })).sort((a, b) => b.amount - a.amount);
+    return { totalExp, categoryList };
+  }, [reportingContext, startDate, endDate]);
+
+  const revenueAnalysisData = useMemo(() => {
+    const pnl = getProfitAndLoss(reportingContext, new Date(startDate), new Date(endDate));
+    const totalRev = pnl.totalRevenue;
+    const categoryList = Object.entries(pnl.revenueByCategory).map(([name, amount]) => ({
+      name,
+      amount,
+      percentage: totalRev > 0 ? (amount / totalRev) * 100 : 0
+    })).sort((a, b) => b.amount - a.amount);
+    return { totalRev, categoryList };
+  }, [reportingContext, startDate, endDate]);
+
+  return (
+    <div className="space-y-5 animate-in fade-in duration-200 font-sans text-slate-800">
+
+      {/* TOP PROFESSIONAL BAR */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 tracking-tight">Financial Reports Suite</h2>
+            <p className="text-xs text-slate-500 font-normal">
+              Corporate accounting reports & executive financial audit ledger
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* ADVANCED FILTER TOGGLE BUTTON */}
+            <button
+              onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border ${
+                isFilterPanelOpen || selectedAccountFilter !== 'All' || selectedCategoryFilter !== 'All'
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border-slate-200'
+              }`}
+            >
+              <Filter size={13} />
+              <span>Filter</span>
+              {(selectedAccountFilter !== 'All' || selectedCategoryFilter !== 'All') && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              )}
+            </button>
+
+            {/* DOWNLOAD SINGLE REPORT BUTTON */}
+            <button
+              onClick={handleExportPDF}
+              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5"
+              title={`Download ${activeTabTitle} PDF`}
+            >
+              <Download size={13} />
+              <span>Download {activeTabTitle} PDF</span>
+            </button>
+
+            {/* DOWNLOAD ALL REPORTS MASTER PDF BUTTON */}
+            <button
+              onClick={handleExportMasterPDF}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-2xs transition flex items-center gap-1.5"
+              title="Download All Reports in a single PDF package"
+            >
+              <Download size={13} />
+              <span>Download All Reports (Master PDF)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* MINIMAL ERP SUBTLE UNDERLINE TAB NAVIGATION */}
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-200 text-xs font-semibold">
+          {[
+            { id: 'pnl', label: 'Profit & Loss' },
+            { id: 'balanceSheet', label: 'Balance Sheet' },
+            { id: 'cashFlow', label: 'Cash Flow' },
+            { id: 'cashPosition', label: 'Cash Position' },
+            { id: 'trialBalance', label: 'Trial Balance' },
+            { id: 'generalLedger', label: 'General Ledger' },
+            { id: 'vendorReport', label: 'Vendor Summary' },
+            { id: 'expenseAnalysis', label: 'Expense Analysis' },
+            { id: 'revenueAnalysis', label: 'Revenue Analysis' }
+          ].map(tab => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as ActiveReportTab)}
+                className={`px-3.5 py-2 transition-all border-b-2 font-bold whitespace-nowrap ${
+                  isActive
+                    ? 'border-slate-900 text-slate-900 bg-slate-50'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ADVANCED FILTERING PANEL (EXPANDABLE) */}
+        {isFilterPanelOpen && (
+          <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3 text-xs animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                <Filter size={13} className="text-slate-500" />
+                Advanced Financial Filters
+              </span>
+              <button
+                onClick={() => {
+                  setSelectedAccountFilter('All');
+                  setSelectedCategoryFilter('All');
+                  applyPeriodPreset('thisMonth');
+                }}
+                className="text-[11px] font-bold text-slate-500 hover:text-slate-800"
+              >
+                Reset Filters
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              {/* PERIOD PRESET SELECTOR */}
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Period Quick Filter</label>
+                <select
+                  value={periodPreset}
+                  onChange={e => applyPeriodPreset(e.target.value as any)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none"
+                >
+                  <option value="thisMonth">This Month</option>
+                  <option value="thisQuarter">This Quarter</option>
+                  <option value="h1">Half-Yearly H1 (Jan-Jun)</option>
+                  <option value="h2">Half-Yearly H2 (Jul-Dec)</option>
+                  <option value="thisYear">This Financial Year (FY)</option>
+                  <option value="lastMonth">Last Month</option>
+                  <option value="lastQuarter">Last Quarter</option>
+                  <option value="lastYear">Last Year</option>
+                  <option value="custom">Custom Date Range</option>
+                </select>
+              </div>
+
+              {/* DATE INPUTS */}
+              {(activeTab === 'balanceSheet' || activeTab === 'cashPosition' || activeTab === 'trialBalance') ? (
+                <div>
+                  <label className="block font-bold text-slate-600 mb-1">As of Date</label>
+                  <input
+                    type="date"
+                    value={asOfDate}
+                    onChange={e => setAsOfDate(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block font-bold text-slate-600 mb-1">Start Date</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={e => { setStartDate(e.target.value); setPeriodPreset('custom'); }}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 mb-1">End Date</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={e => { setEndDate(e.target.value); setPeriodPreset('custom'); }}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none"
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* DATABASE FINANCIAL ACCOUNT FILTER */}
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Financial Account</label>
+                <select
+                  value={selectedAccountFilter}
+                  onChange={e => setSelectedAccountFilter(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none"
+                >
+                  <option value="All">All Accounts (Consolidated)</option>
+                  {financialAccounts.map(acc => (
+                    <option key={acc.id} value={acc.id}>{acc.name} ({acc.type})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* CATEGORY FILTER */}
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Category / Transaction Type</label>
+                <select
+                  value={selectedCategoryFilter}
+                  onChange={e => setSelectedCategoryFilter(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none"
+                >
+                  <option value="All">All Categories</option>
+                  <option value="Sales Revenue">Sales Revenue</option>
+                  <option value="Operational Expense">Operational Expense</option>
+                  <option value="Fixed Asset Purchase">Fixed Asset Purchase</option>
+                  <option value="Loan Repayment">Loan Repayment</option>
+                  <option value="Owner Investment">Owner Investment</option>
+                  <option value="Owner Withdrawal">Owner Withdrawal</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ACTIVE PERIOD BADGE BAR */}
+        <div className="flex items-center justify-between text-xs text-slate-500 font-semibold pt-1 px-1">
+          <div className="flex items-center gap-2">
+            <Calendar size={13} className="text-slate-400" />
+            <span>Active Period: <strong className="text-slate-900">{periodLabel}</strong></span>
+          </div>
+          {(selectedAccountFilter !== 'All' || selectedCategoryFilter !== 'All') && (
+            <span className="text-[11px] bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded border border-slate-200">
+              Filtered: {selectedAccountFilter !== 'All' ? '1 Account' : ''} {selectedCategoryFilter !== 'All' ? '1 Category' : ''}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 1. PROFIT & LOSS STATEMENT */}
+      {/* ========================================================================= */}
+      {activeTab === 'pnl' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Total Operating Revenue</span>
+              <div className="text-xl font-bold text-emerald-600 mt-1">
+                {formatCurrency(pnlStructure.sections[0]?.total || 0)}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Total Operating Expenses</span>
+              <div className="text-xl font-bold text-rose-600 mt-1">
+                {formatCurrency(pnlStructure.sections[1]?.total || 0)}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Net Operating Profit / (Loss)</span>
+              <div className={`text-xl font-bold mt-1 ${ (pnlStructure.summaryTotal || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600' }`}>
+                {formatCurrency(pnlStructure.summaryTotal || 0)}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-4">
+            {pnlStructure.sections.map(sec => (
+              <div key={sec.id} className="space-y-2">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-1.5 font-bold text-xs uppercase tracking-wide text-slate-900">
+                  <span>{sec.title}</span>
+                  <span>{formatCurrency(sec.total)}</span>
+                </div>
+                <div className="space-y-1">
+                  {sec.groups.map(g => renderGroup(g))}
+                </div>
+              </div>
+            ))}
+
+            <div className="pt-3 border-t-2 border-slate-900 flex justify-between items-center bg-slate-50 p-3 rounded-lg text-xs font-bold text-slate-900">
+              <span>NET OPERATING PROFIT / (LOSS)</span>
+              <span className={`text-sm font-bold ${ (pnlStructure.summaryTotal || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600' }`}>
+                {formatCurrency(pnlStructure.summaryTotal || 0)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. BALANCE SHEET */}
+      {/* ========================================================================= */}
+      {activeTab === 'balanceSheet' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* ASSETS */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Assets</h3>
+                <span className="text-xs font-bold text-slate-900">
+                  {formatCurrency(balanceSheetStructure.sections.find(s => s.id === 'sec_assets')?.total || 0)}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {balanceSheetStructure.sections.find(s => s.id === 'sec_assets')?.groups.map(g => renderGroup(g))}
+              </div>
+              <div className="pt-2 border-t-2 border-slate-900 flex justify-between items-center text-xs font-bold">
+                <span>TOTAL ASSETS</span>
+                <span className="text-emerald-700">
+                  {formatCurrency(balanceSheetStructure.sections.find(s => s.id === 'sec_assets')?.total || 0)}
+                </span>
+              </div>
+            </div>
+
+            {/* LIABILITIES & EQUITY */}
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+              <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Liabilities & Owner Equity</h3>
+                <span className="text-xs font-bold text-slate-900">
+                  {formatCurrency(balanceSheetStructure.summaryTotal || 0)}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {balanceSheetStructure.sections.find(s => s.id === 'sec_liabilities')?.groups.map(g => renderGroup(g))}
+                {balanceSheetStructure.sections.find(s => s.id === 'sec_equity')?.groups.map(g => renderGroup(g))}
+              </div>
+              <div className="pt-2 border-t-2 border-slate-900 flex justify-between items-center text-xs font-bold">
+                <span>TOTAL LIABILITIES & OWNER EQUITY</span>
+                <span className="text-slate-900">
+                  {formatCurrency(balanceSheetStructure.summaryTotal || 0)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className={`p-3 rounded-lg border text-xs font-semibold flex items-center justify-between ${
+            balanceSheetStructure.validation?.isValid ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'
+          }`}>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 size={15} />
+              {balanceSheetStructure.validation?.isValid ? 'Balance Sheet Reconciled' : 'Balance Imbalance'}
+            </span>
+            <span>Diff: {formatCurrency(balanceSheetStructure.validation?.imbalanceAmount || 0)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. CASH FLOW STATEMENT */}
+      {/* ========================================================================= */}
+      {activeTab === 'cashFlow' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-4 text-xs">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide border-b border-slate-200 pb-2">Statement of Cash Flows</h3>
+          
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <div className="font-bold text-slate-900 uppercase text-[11px]">1. Operating Activities</div>
+              <div className="flex justify-between py-1 px-2.5 bg-slate-50 rounded">
+                <span>Cash from Customers</span>
+                <span className="font-semibold text-emerald-600">+{formatCurrency(cashFlowData.operatingInflows)}</span>
+              </div>
+              <div className="flex justify-between py-1 px-2.5 bg-slate-50 rounded">
+                <span>Operating Expenses Paid</span>
+                <span className="font-semibold text-rose-600">-{formatCurrency(cashFlowData.operatingOutflows)}</span>
+              </div>
+              <div className="flex justify-between py-1.5 px-2.5 bg-slate-100 font-bold">
+                <span>Net Cash from Operating Activities</span>
+                <span>{formatCurrency(cashFlowData.netOperatingCash)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="font-bold text-slate-900 uppercase text-[11px]">2. Investing Activities</div>
+              <div className="flex justify-between py-1 px-2.5 bg-slate-50 rounded">
+                <span>Fixed Asset Purchases</span>
+                <span className="font-semibold text-rose-600">-{formatCurrency(cashFlowData.assetPurchases)}</span>
+              </div>
+              <div className="flex justify-between py-1.5 px-2.5 bg-slate-100 font-bold">
+                <span>Net Cash Used in Investing Activities</span>
+                <span>{formatCurrency(-cashFlowData.assetPurchases)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="font-bold text-slate-900 uppercase text-[11px]">3. Financing Activities</div>
+              <div className="flex justify-between py-1 px-2.5 bg-slate-50 rounded">
+                <span>Capital Inflows</span>
+                <span className="font-semibold text-emerald-600">+{formatCurrency(cashFlowData.capitalInflows)}</span>
+              </div>
+              <div className="flex justify-between py-1 px-2.5 bg-slate-50 rounded">
+                <span>Owner Withdrawals</span>
+                <span className="font-semibold text-rose-600">-{formatCurrency(cashFlowData.withdrawals)}</span>
+              </div>
+              <div className="flex justify-between py-1.5 px-2.5 bg-slate-100 font-bold">
+                <span>Net Cash from Financing Activities</span>
+                <span>{formatCurrency(cashFlowData.netFinancingCash)}</span>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t-2 border-slate-900 flex justify-between items-center font-bold text-slate-900 text-xs bg-slate-50 p-2.5 rounded-lg">
+              <span>Closing Cash & Bank Balance</span>
+              <span>{formatCurrency(cashFlowData.closingCash)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. CASH POSITION */}
+      {/* ========================================================================= */}
+      {activeTab === 'cashPosition' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide border-b border-slate-200 pb-2">Financial Account Cash Balances</h3>
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 font-bold text-slate-600 border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-3">Account</th>
+                  <th className="py-2.5 px-3">Type</th>
+                  <th className="py-2.5 px-3 text-right">Balance (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {cashPositionStructure.sections[0]?.groups[0]?.items?.map(acc => (
+                  <tr key={acc.id} className="hover:bg-slate-50/60">
+                    <td className="py-2.5 px-3 font-semibold text-slate-900">{acc.name}</td>
+                    <td className="py-2.5 px-3 text-slate-500">{acc.type}</td>
+                    <td className="py-2.5 px-3 text-right font-bold text-slate-900">{formatCurrency(acc.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. TRIAL BALANCE */}
+      {/* ========================================================================= */}
+      {activeTab === 'trialBalance' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide border-b border-slate-200 pb-2">Trial Balance Sheet</h3>
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 font-bold text-slate-600 border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-3">Account Particulars</th>
+                  <th className="py-2.5 px-3 text-right">Debit (₹)</th>
+                  <th className="py-2.5 px-3 text-right">Credit (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {trialBalanceStructure.sections[0]?.groups[0]?.items?.map((debitItem, idx) => {
+                  const creditItem = trialBalanceStructure.sections[1]?.groups[0]?.items?.[idx];
+                  return (
+                    <tr key={debitItem.id} className="hover:bg-slate-50/60">
+                      <td className="py-2.5 px-3 font-semibold text-slate-900">{debitItem.name}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-emerald-600">{debitItem.amount > 0 ? formatCurrency(debitItem.amount) : '-'}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-indigo-600">{creditItem && creditItem.amount > 0 ? formatCurrency(creditItem.amount) : '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-slate-100 font-black border-t-2 border-slate-900 text-slate-900">
+                <tr>
+                  <td className="py-2.5 px-3">TOTALS</td>
+                  <td className="py-2.5 px-3 text-right">{formatCurrency(trialBalanceStructure.sections[0]?.total || 0)}</td>
+                  <td className="py-2.5 px-3 text-right">{formatCurrency(trialBalanceStructure.sections[1]?.total || 0)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. GENERAL LEDGER */}
+      {/* ========================================================================= */}
+      {activeTab === 'generalLedger' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+          <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">General Ledger Register</h3>
+            <div className="relative w-64">
+              <Search size={13} className="absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search transactions..."
+                value={glSearchTerm}
+                onChange={e => setGlSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 py-1 text-xs outline-none font-medium"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 font-bold text-slate-600 border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-3">Date</th>
+                  <th className="py-2.5 px-3">Voucher</th>
+                  <th className="py-2.5 px-3">Type</th>
+                  <th className="py-2.5 px-3">Description</th>
+                  <th className="py-2.5 px-3 text-right">Debit (₹)</th>
+                  <th className="py-2.5 px-3 text-right">Credit (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {generalLedgerData.entries.map(entry => {
+                  const debitAmt = entry.entries.reduce((sum, line) => line.type === 'DEBIT' ? sum + line.amount : sum, 0);
+                  const creditAmt = entry.entries.reduce((sum, line) => line.type === 'CREDIT' ? sum + line.amount : sum, 0);
+                  return (
+                    <tr key={entry.id} className="hover:bg-slate-50/60">
+                      <td className="py-2.5 px-3 text-slate-500 font-medium">{new Date(entry.date).toLocaleDateString('en-GB')}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-800">{entry.id.slice(0, 8)}</td>
+                      <td className="py-2.5 px-3 font-semibold text-indigo-700">{entry.subType || entry.type}</td>
+                      <td className="py-2.5 px-3 text-slate-900 font-medium">{entry.remarks}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-emerald-600">{formatCurrency(debitAmt)}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-indigo-600">{formatCurrency(creditAmt)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 7. VENDOR SUMMARY */}
+      {/* ========================================================================= */}
+      {activeTab === 'vendorReport' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+          <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide">Vendor Summary</h3>
+            <input
+              type="text"
+              placeholder="Search vendor..."
+              value={vendorSearch}
+              onChange={e => setVendorSearch(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs outline-none font-medium"
+            />
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 font-bold text-slate-600 border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-3">Vendor Name</th>
+                  <th className="py-2.5 px-3 text-center">Tx Count</th>
+                  <th className="py-2.5 px-3">Last Transaction</th>
+                  <th className="py-2.5 px-3 text-right">Total Purchases (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {vendorReportData.map(v => (
+                  <tr key={v.name} className="hover:bg-slate-50/60">
+                    <td className="py-2.5 px-3 font-semibold text-slate-900">{v.name}</td>
+                    <td className="py-2.5 px-3 text-center font-bold text-slate-600">{v.count}</td>
+                    <td className="py-2.5 px-3 text-slate-500">{new Date(v.lastDate).toLocaleDateString('en-GB')}</td>
+                    <td className="py-2.5 px-3 text-right font-bold text-rose-600">{formatCurrency(v.totalPurchases)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 8. EXPENSE ANALYSIS */}
+      {/* ========================================================================= */}
+      {activeTab === 'expenseAnalysis' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-4">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide border-b border-slate-200 pb-2">Expense Distribution Analysis</h3>
+          <div className="space-y-3">
+            {expenseAnalysisData.categoryList.map(item => (
+              <div key={item.name} className="space-y-1">
+                <div className="flex justify-between items-center text-xs font-semibold">
+                  <span className="text-slate-800">{item.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">{item.percentage.toFixed(1)}%</span>
+                    <span className="text-rose-600 font-bold">{formatCurrency(item.amount)}</span>
+                  </div>
+                </div>
+                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-slate-700 h-full rounded-full" style={{ width: `${item.percentage}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 9. REVENUE ANALYSIS */}
+      {/* ========================================================================= */}
+      {activeTab === 'revenueAnalysis' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-4">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wide border-b border-slate-200 pb-2">Revenue Service Breakdown</h3>
+          <div className="space-y-3">
+            {revenueAnalysisData.categoryList.map(item => (
+              <div key={item.name} className="space-y-1">
+                <div className="flex justify-between items-center text-xs font-semibold">
+                  <span className="text-slate-800">{item.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">{item.percentage.toFixed(1)}%</span>
+                    <span className="text-emerald-600 font-bold">{formatCurrency(item.amount)}</span>
+                  </div>
+                </div>
+                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-slate-900 h-full rounded-full" style={{ width: `${item.percentage}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
 };
 
 export default ReportsView;

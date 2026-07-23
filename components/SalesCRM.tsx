@@ -155,10 +155,10 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
 
             {/* Top Navigation Router */}
             {showTabs && (
-                <div className="flex p-1.5 bg-slate-100 rounded-2xl w-fit">
+                <div className="flex p-1 bg-slate-100/90 rounded-2xl w-full sm:w-fit overflow-x-auto no-scrollbar scrollbar-none gap-1 border border-slate-200/60 shadow-xs">
                     <button
                         onClick={() => setActiveTab('dashboard')}
-                        className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'dashboard'
+                        className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-center whitespace-nowrap transition-all cursor-pointer ${activeTab === 'dashboard'
                             ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}
@@ -167,7 +167,7 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
                     </button>
                     <button
                         onClick={() => setActiveTab('inbound')}
-                        className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'inbound'
+                        className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-center whitespace-nowrap transition-all cursor-pointer ${activeTab === 'inbound'
                             ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}
@@ -176,7 +176,7 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
                     </button>
                     <button
                         onClick={() => setActiveTab('outbound')}
-                        className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeTab === 'outbound'
+                        className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-center whitespace-nowrap transition-all cursor-pointer ${activeTab === 'outbound'
                             ? 'bg-white text-blue-600 shadow-sm border border-slate-200/60'
                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}
@@ -188,10 +188,10 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
 
             {/* Admin Payout & Incentive Navigation */}
             {showAdminTabs && (
-                <div className="flex p-1.5 bg-slate-100 rounded-2xl w-fit">
+                <div className="flex p-1 bg-slate-100/90 rounded-2xl w-full sm:w-fit overflow-x-auto no-scrollbar scrollbar-none gap-1 border border-slate-200/60 shadow-xs">
                     <button
                         onClick={() => setAdminActiveTab('dashboard')}
-                        className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${adminActiveTab === 'dashboard'
+                        className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-center whitespace-nowrap transition-all cursor-pointer ${adminActiveTab === 'dashboard'
                             ? 'bg-slate-800 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}
@@ -200,7 +200,7 @@ const SalesCRM: React.FC<SalesCRMProps> = ({
                     </button>
                     <button
                         onClick={() => setAdminActiveTab('incentives')}
-                        className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${adminActiveTab === 'incentives'
+                        className={`flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider text-center whitespace-nowrap transition-all cursor-pointer ${adminActiveTab === 'incentives'
                             ? 'bg-slate-800 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                             }`}

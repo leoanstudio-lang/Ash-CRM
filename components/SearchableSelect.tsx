@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Search, ChevronDown, Check } from 'lucide-react';
 
 interface Option {
-    id: string;
+    id?: string;
+    value?: string;
     label: string;
     subLabel?: string;
 }
@@ -28,6 +29,8 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const wrapperRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+
+    const getOptionValue = (opt: Option) => opt.id ?? opt.value ?? '';
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -60,7 +63,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
         );
     }, [options, searchTerm]);
 
-    const selectedOption = options.find(o => o.id === value);
+    const selectedOption = options.find(o => getOptionValue(o) === value);
 
     return (
         <div className="space-y-1.5" ref={wrapperRef}>
@@ -70,7 +73,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                     onClick={() => setIsOpen(!isOpen)}
                     className={`w-full p-3 border rounded-xl bg-slate-50 font-bold text-xs text-slate-700 flex justify-between items-center cursor-pointer transition-all ${isOpen ? 'ring-2 ring-blue-500 border-transparent bg-white' : 'border-slate-200 hover:border-slate-300'}`}
                 >
-                    <span className={!selectedOption ? "text-slate-400" : ""}>
+                    <span className={!selectedOption ? "text-slate-400 font-medium" : ""}>
                         {selectedOption ? selectedOption.label : placeholder}
                     </span>
                     <ChevronDown size={16} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -94,22 +97,31 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                         </div>
                         <div className="max-h-60 overflow-y-auto p-1 custom-scrollbar">
                             {filteredOptions.length > 0 ? (
-                                filteredOptions.map(option => (
-                                    <div
-                                        key={option.id}
-                                        onClick={() => {
-                                            onChange(option.id);
-                                            setIsOpen(false);
-                                        }}
-                                        className={`flex items-center justify-between px-3 py-3 rounded-lg cursor-pointer transition-colors ${value === option.id ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'hover:bg-slate-50 text-slate-700 border border-transparent'}`}
-                                    >
-                                        <div>
-                                            <div className="font-bold text-xs">{option.label}</div>
-                                            {option.subLabel && <div className="text-[10px] font-medium opacity-70 mt-0.5">{option.subLabel}</div>}
+                                filteredOptions.map(option => {
+                                    const optVal = getOptionValue(option);
+                                    const isSelected = Boolean(value && optVal === value);
+
+                                    return (
+                                        <div
+                                            key={optVal || option.label}
+                                            onClick={() => {
+                                                onChange(optVal);
+                                                setIsOpen(false);
+                                            }}
+                                            className={`flex items-center justify-between px-3 py-3 rounded-lg cursor-pointer transition-colors ${
+                                                isSelected
+                                                    ? 'bg-blue-50 text-blue-700 border border-blue-100 font-bold'
+                                                    : 'hover:bg-slate-50 text-slate-700 border border-transparent font-medium'
+                                            }`}
+                                        >
+                                            <div>
+                                                <div className="text-xs">{option.label}</div>
+                                                {option.subLabel && <div className="text-[10px] font-medium opacity-70 mt-0.5">{option.subLabel}</div>}
+                                            </div>
+                                            {isSelected && <Check size={14} className="text-blue-600" />}
                                         </div>
-                                        {value === option.id && <Check size={14} className="text-blue-600" />}
-                                    </div>
-                                ))
+                                    );
+                                })
                             ) : (
                                 <div className="py-8 text-center">
                                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">No results found</p>

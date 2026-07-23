@@ -859,17 +859,17 @@ const SalesDashboard: React.FC<SalesDashboardProps> = ({
 // --- Helper Components ---
 
 const StatCard = ({ title, value, icon, trend }: any) => (
-  <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm transition-all flex flex-col justify-between min-h-[140px]">
-    <div className="flex justify-between items-start gap-4">
-      <div className="space-y-1">
-        <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{title}</h4>
-        <p className="text-2xl font-bold text-slate-900 tracking-tight">{value}</p>
+  <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200/80 shadow-sm transition-all flex flex-col justify-between min-h-[130px] sm:min-h-[140px]">
+    <div className="flex justify-between items-start gap-2 sm:gap-4">
+      <div className="space-y-1 min-w-0 flex-1">
+        <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate">{title}</h4>
+        <p className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight truncate">{value}</p>
       </div>
-      <div className="w-8 h-8 rounded bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500 shrink-0">
+      <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200/60 flex items-center justify-center text-slate-500 shrink-0">
         {icon}
       </div>
     </div>
-    <div className="text-[10px] text-slate-450 font-bold mt-4 pt-3 border-t border-slate-100 flex items-center gap-1.5">
+    <div className="text-[10px] text-slate-450 font-bold mt-3 sm:mt-4 pt-2.5 sm:pt-3 border-t border-slate-100 flex items-center gap-1.5 truncate">
       {trend}
     </div>
   </div>

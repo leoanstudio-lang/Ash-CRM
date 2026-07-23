@@ -6,10 +6,10 @@ import {
   Plus, Search, Calendar, Clock, BarChart3, Settings2, Edit3,
   CheckCircle2, AlertCircle, TrendingUp, Layers, ChevronRight,
   Timer, X, Megaphone, Target, Zap, Trash2, ArrowLeft, Download, FileText,
-  User, Check, AlertTriangle, ShieldAlert,
+  User, Check, AlertTriangle, ShieldAlert, Users, FolderOpen, Building2, UserPlus,
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, AlignJustify, List, ListOrdered
 } from 'lucide-react';
-import { addProjectToDB, updateProjectInDB, addPaymentAlertToDB, deleteProjectFromDB } from '../lib/db';
+import { addProjectToDB, updateProjectInDB, addPaymentAlertToDB, deleteProjectFromDB, addClientToDB } from '../lib/db';
 import jsPDF from 'jspdf';
 import { loadWatermarkBase64, stampWatermarkAllPages } from '../lib/pdfWatermark';
 import GoogleDocsWorkspace from './GoogleDocsWorkspace';
@@ -68,6 +68,21 @@ const Marketing: React.FC<MarketingProps> = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [activeWorkspaceProject, setActiveWorkspaceProject] = useState<Project | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+
+  // Client Account Creation / Search States
+  const [addedMktClientIds, setAddedMktClientIds] = useState<string[]>([]);
+  const [showCreateClientModal, setShowCreateClientModal] = useState(false);
+  const [clientMode, setClientMode] = useState<'search' | 'new'>('search');
+  const [selectedExistingClientId, setSelectedExistingClientId] = useState('');
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newClientForm, setNewClientForm] = useState({
+    name: '',
+    companyName: '',
+    email: '',
+    mobile: ''
+  });
 
   // Keep the active workspace project state synchronized with master projects list from Firestore
   useEffect(() => {
@@ -106,6 +121,68 @@ const Marketing: React.FC<MarketingProps> = ({
   });
 
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+
+  // Safe Arrays
+  const safeClients = Array.isArray(clients) ? clients : [];
+  const safeProjects = Array.isArray(projects) ? projects : [];
+
+  // Handle Client Account Creation / Selection (Same structure as Graphics Designing)
+  const handleClientSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      if (clientMode === 'search') {
+        if (!selectedExistingClientId) {
+          alert('Please select a client from Client DB.');
+          setIsSubmitting(false);
+          return;
+        }
+        const clientObj = safeClients.find(c => c && c.id === selectedExistingClientId);
+        if (clientObj) {
+          if (!addedMktClientIds.includes(clientObj.id)) {
+            setAddedMktClientIds(prev => [...prev, clientObj.id]);
+          }
+          setSelectedClient(clientObj);
+          setActiveWorkspaceProject(null);
+          setShowCreateClientModal(false);
+        }
+      } else {
+        if (!newClientForm.name.trim()) {
+          alert('Please enter client name.');
+          setIsSubmitting(false);
+          return;
+        }
+        const createdClient = await addClientToDB({
+          name: newClientForm.name.trim(),
+          companyName: newClientForm.companyName.trim() || newClientForm.name.trim(),
+          email: newClientForm.email.trim(),
+          mobile: newClientForm.mobile.trim(),
+          createdAt: new Date().toISOString(),
+          status: 'Active'
+        });
+
+        if (createdClient && createdClient.id) {
+          if (!addedMktClientIds.includes(createdClient.id)) {
+            setAddedMktClientIds(prev => [...prev, createdClient.id]);
+          }
+          setSelectedClient(createdClient);
+          setActiveWorkspaceProject(null);
+          setShowCreateClientModal(false);
+        } else {
+          alert('Failed to create client account.');
+        }
+      }
+      setNewClientForm({ name: '', companyName: '', email: '', mobile: '' });
+      setSelectedExistingClientId('');
+    } catch (err) {
+      console.error('Error adding client:', err);
+      alert('Error creating client account.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const getTodayLocal = () => {
     const d = new Date();
@@ -529,20 +606,47 @@ const Marketing: React.FC<MarketingProps> = ({
     }
   };
 
-  const mktProjects = projects.filter(p => p.type === 'Marketing');
+  const mktProjects = safeProjects.filter(p => p && p.type === 'Marketing');
 
-  const filteredProjects = mktProjects.filter(p =>
+  // Marketing Clients: clients who have marketing projects OR were added in session
+  const mktClients = safeClients.filter(c => c && c.id && (
+    mktProjects.some(p => p && p.clientId === c.id) ||
+    addedMktClientIds.includes(c.id)
+  ));
+
+  // Filter Marketing Clients by Search Term
+  const filteredMktClients = mktClients.filter(c => c && (
+    (c.name || '').toLowerCase().includes(clientSearchTerm.toLowerCase()) ||
+    (c.companyName || '').toLowerCase().includes(clientSearchTerm.toLowerCase()) ||
+    (c.email || '').toLowerCase().includes(clientSearchTerm.toLowerCase()) ||
+    (c.mobile || '').includes(clientSearchTerm)
+  ));
+
+  // SORT CLIENTS: Clients WITH Active Campaigns on TOP
+  const sortedMktClients = [...filteredMktClients].sort((a, b) => {
+    const aActive = mktProjects.filter(p => p && p.clientId === a.id && p.status !== 'Completed' && p.status !== 'Closed').length;
+    const bActive = mktProjects.filter(p => p && p.clientId === b.id && p.status !== 'Completed' && p.status !== 'Closed').length;
+    return bActive - aActive;
+  });
+
+  const clientScopedProjects = selectedClient
+    ? mktProjects.filter(p => p && p.clientId === selectedClient.id)
+    : mktProjects;
+
+  const filteredProjects = clientScopedProjects.filter(p =>
     !searchTerm ||
     p.clientName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.serviceName?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const dailyProjects = mktProjects.filter(p => {
+  const dailyProjects = clientScopedProjects.filter(p => {
     const start = parseLocalDate(p.startDate);
-    const isStarted = today >= start;
-    const isNotFinished = p.status !== 'Completed' && p.status !== 'Closed';
-    return isStarted && isNotFinished;
+    return today >= start;
+  }).sort((a, b) => {
+    const aDone = (a.status === 'Completed' || a.status === 'Closed') ? 1 : 0;
+    const bDone = (b.status === 'Completed' || b.status === 'Closed') ? 1 : 0;
+    return aDone - bDone;
   });
 
   const getRemainingDaysInfo = (deadline: string) => {
@@ -689,7 +793,7 @@ const Marketing: React.FC<MarketingProps> = ({
                 onClick={() => { setActiveWorkspaceProject(null); }}
                 className="flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[11px] font-bold transition w-full shadow-sm"
               >
-                <ArrowLeft size={13} /> Back to Campaigns
+                <ArrowLeft size={13} /> {selectedClient ? 'Back to Campaigns' : 'Back to Client Accounts'}
               </button>
               
               <div className="bg-slate-50 rounded-lg border border-slate-200 p-4 space-y-3.5">
@@ -1124,9 +1228,53 @@ const Marketing: React.FC<MarketingProps> = ({
             </div>
           </div>
         </div>
-      ) : (
+      ) : selectedClient ? (
         <>
-          {/* Main List Section */}
+          {/* ═══ LEVEL 2 — Inside Selected Client Account ═══ */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-slate-200">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setSelectedClient(null); setSearchTerm(''); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-[11px] font-bold transition shadow-sm shrink-0"
+              >
+                <ArrowLeft size={12} /> All Client Accounts
+              </button>
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center shrink-0">
+                  <span className="text-white font-black text-sm">{(selectedClient?.name || 'C')[0].toUpperCase()}</span>
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-slate-900 leading-tight">{selectedClient?.name}</h2>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {selectedClient?.companyName || 'Private Client'}
+                    {selectedClient?.email ? ` · ${selectedClient.email}` : ''}
+                    {selectedClient?.mobile ? ` · ${selectedClient.mobile}` : ''}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">{dailyProjects.length} Active</span>
+              </div>
+              <button
+                onClick={() => {
+                  setProjectForm({ clientId: selectedClient.id, assignedEmployeeId: '', type: 'Marketing', priority: 'Medium', status: 'In Progress', startDate: '', deadline: '', totalAmount: 0, advance: 0, description: '' });
+                  setSelectedServiceIds([]);
+                  setCreationSource('manual');
+                  setSelectedQuotationId('');
+                  setEditingProject(null);
+                  setShowAddModal(true);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all shadow-sm active:scale-95"
+              >
+                <Plus size={14} /> CREATE CAMPAIGN
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-section tabs */}
           <div className="flex gap-1 p-0.5 bg-slate-200/50 rounded-lg w-max border border-slate-200 shadow-sm mb-4">
             <button
               onClick={() => setSubSection('Daily')}
@@ -1156,12 +1304,6 @@ const Marketing: React.FC<MarketingProps> = ({
                     <div className="w-1.5 h-1.5 bg-slate-500 rounded-full"></div>
                     <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">{dailyProjects.length} Active</span>
                   </div>
-                  <button
-                    onClick={() => { resetForm(); setEditingProject(null); setShowAddModal(true); }}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-all"
-                  >
-                    <Plus size={13} /> New Campaign
-                  </button>
                 </div>
               </div>
 
@@ -1169,14 +1311,25 @@ const Marketing: React.FC<MarketingProps> = ({
                 {dailyProjects.length > 0 ? dailyProjects.map(project => {
                   const remInfo = getRemainingDaysInfo(project.deadline);
                   const activeServices = (project.servicesAllocated || []).map(s => s.serviceName);
+                  const isDone = project.status === 'Completed' || project.status === 'Closed';
 
                   return (
-                    <div key={project.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:border-slate-350 transition-all p-5 flex flex-col md:flex-row gap-6 items-stretch md:items-center relative group">
+                    <div key={project.id} className={`rounded-xl border transition-all p-5 flex flex-col md:flex-row gap-6 items-stretch md:items-center relative group ${
+                      isDone
+                        ? 'bg-slate-50/80 border-slate-200/90 opacity-75 hover:opacity-100'
+                        : 'bg-white border-slate-200 shadow-sm hover:border-slate-350'
+                    }`}>
                       <div className="flex-1 space-y-3">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${priorityColor(project.priority)}`}>
-                            {project.priority} Priority
-                          </span>
+                          {isDone ? (
+                            <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              {project.status === 'Closed' ? 'Closed' : 'Completed'}
+                            </span>
+                          ) : (
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${priorityColor(project.priority)}`}>
+                              {project.priority} Priority
+                            </span>
+                          )}
                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-1">
                             <Megaphone size={10} /> Marketing
                           </span>
@@ -1234,13 +1387,20 @@ const Marketing: React.FC<MarketingProps> = ({
                           <div className="flex w-full gap-1.5">
                             <button
                               onClick={() => openWorkspace(project)}
-                              className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-850 text-white rounded-lg text-xs font-bold transition-all"
+                              className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-850 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
                             >
                               <Layers size={12} /> Workspace
                             </button>
                             <button
+                              onClick={() => openEdit(project)}
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-200 transition-all cursor-pointer"
+                              title="Edit Campaign"
+                            >
+                              <Edit3 size={12} />
+                            </button>
+                            <button
                               onClick={() => handleDeleteProject(project.id, project.clientName || 'Client')}
-                              className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg border border-slate-200 hover:border-red-250 transition-all"
+                              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg border border-slate-200 hover:border-red-200 transition-all cursor-pointer"
                               title="Delete Campaign"
                             >
                               <Trash2 size={12} />
@@ -1267,7 +1427,7 @@ const Marketing: React.FC<MarketingProps> = ({
                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest">Revenue Pipeline</span>
                     <TrendingUp size={16} className="text-slate-400" />
                   </div>
-                  <p className="text-xl font-black text-slate-800">₹{mktProjects.reduce((sum, p) => sum + (p.totalAmount || 0), 0).toLocaleString()}</p>
+                  <p className="text-xl font-black text-slate-800">₹{clientScopedProjects.reduce((sum, p) => sum + (p.totalAmount || 0), 0).toLocaleString()}</p>
                   <p className="text-[9px] text-slate-400">Total Marketing Budget</p>
                 </div>
 
@@ -1276,7 +1436,7 @@ const Marketing: React.FC<MarketingProps> = ({
                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest">Active Records</span>
                     <Layers size={16} className="text-slate-400" />
                   </div>
-                  <p className="text-xl font-black text-slate-800">{mktProjects.length}</p>
+                  <p className="text-xl font-black text-slate-800">{clientScopedProjects.length}</p>
                   <p className="text-[9px] text-slate-400">Campaigns tracked</p>
                 </div>
 
@@ -1285,7 +1445,7 @@ const Marketing: React.FC<MarketingProps> = ({
                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest">Completed campaigns</span>
                     <CheckCircle2 size={16} className="text-slate-400" />
                   </div>
-                  <p className="text-xl font-black text-slate-800">{mktProjects.filter(p => p.status === 'Completed').length}</p>
+                  <p className="text-xl font-black text-slate-800">{clientScopedProjects.filter(p => p.status === 'Completed').length}</p>
                   <p className="text-[9px] text-slate-400">Delivered subscriptions</p>
                 </div>
               </div>
@@ -1417,6 +1577,267 @@ const Marketing: React.FC<MarketingProps> = ({
             </div>
           )}
         </>
+      ) : (
+        <>
+          {/* ═══ LEVEL 1 — Marketing Client Accounts View (Same structure as Graphics Designing) ═══ */}
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Top Header Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+              <div>
+                <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                  Marketing Client Accounts
+                </h2>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  Select or create a marketing client account to manage campaigns
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowCreateClientModal(true)}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all shadow-xs flex items-center gap-2 active:scale-95 cursor-pointer"
+                >
+                  <UserPlus size={15} /> CREATE CLIENT ACCOUNT
+                </button>
+              </div>
+            </div>
+
+            {/* Search Bar */}
+            {mktClients.length > 0 && (
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs max-w-sm">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                  <input
+                    type="text"
+                    placeholder="Search marketing client accounts..."
+                    value={clientSearchTerm}
+                    onChange={(e) => setClientSearchTerm(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-xs pl-8 pr-3 py-1.5 rounded-lg focus:outline-none focus:border-slate-900 focus:bg-white font-medium"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* CLIENT ACCOUNTS LIST / TABLE */}
+            {sortedMktClients.length === 0 ? (
+              <div className="bg-white border border-slate-200/80 rounded-2xl p-16 text-center shadow-xs space-y-3">
+                <Building2 className="mx-auto text-slate-300 mb-1" size={44} />
+                <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider">No Marketing Client Accounts Yet</h3>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  Click <strong className="text-slate-800">"CREATE CLIENT ACCOUNT"</strong> above to select a client from Client DB or create a new client for marketing.
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => setShowCreateClientModal(true)}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-xs inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <UserPlus size={15} /> CREATE CLIENT ACCOUNT
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white border border-slate-200/80 rounded-2xl shadow-xs overflow-hidden divide-y divide-slate-100">
+                <div className="bg-slate-50 text-slate-500 font-bold text-[11px] uppercase tracking-wider px-6 py-3.5 grid grid-cols-12 gap-4 items-center border-b border-slate-200/60">
+                  <div className="col-span-4">Client Name / Company</div>
+                  <div className="col-span-3">Contact Email</div>
+                  <div className="col-span-2">Mobile / Phone</div>
+                  <div className="col-span-2">Campaign Status</div>
+                  <div className="col-span-1 text-right">Action</div>
+                </div>
+
+                {sortedMktClients.map(client => {
+                  if (!client) return null;
+                  const clientProjs = mktProjects.filter(p => p && p.clientId === client.id);
+                  const activeProjs = clientProjs.filter(p => p && p.status !== 'Completed' && p.status !== 'Closed');
+                  const completedProjs = clientProjs.filter(p => p && (p.status === 'Completed' || p.status === 'Closed'));
+
+                  return (
+                    <div
+                      key={client.id}
+                      onClick={() => {
+                        setSelectedClient(client);
+                        setActiveWorkspaceProject(null);
+                      }}
+                      className="px-6 py-4 grid grid-cols-12 gap-4 items-center transition-colors cursor-pointer hover:bg-slate-50/80 group"
+                    >
+                      <div className="col-span-4 flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs transition-colors ${
+                          activeProjs.length > 0
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-700 group-hover:bg-slate-900 group-hover:text-white'
+                        }`}>
+                          {client.name ? client.name.charAt(0).toUpperCase() : 'C'}
+                        </div>
+
+                        <div className="truncate">
+                          <h3 className="text-xs font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors truncate">
+                            {client.name}
+                          </h3>
+                          <p className="text-[11px] text-slate-500 font-normal truncate">
+                            {client.companyName || 'Private Client'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="col-span-3 text-xs text-slate-700 font-medium truncate">
+                        {client.email ? client.email : <span className="text-slate-400 italic">No email</span>}
+                      </div>
+
+                      <div className="col-span-2 text-xs text-slate-600 truncate">
+                        {client.mobile ? client.mobile : <span className="text-slate-400 italic">No phone</span>}
+                      </div>
+
+                      <div className="col-span-2 flex items-center gap-1.5 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-md ${
+                          activeProjs.length > 0
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        }`}>
+                          {activeProjs.length} Active
+                        </span>
+
+                        {completedProjs.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {completedProjs.length} Done
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="col-span-1 text-right flex items-center justify-end">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedClient(client);
+                            setActiveWorkspaceProject(null);
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors"
+                        >
+                          <span>Open</span>
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ═══ CREATE / SELECT CLIENT ACCOUNT MODAL (Exact match with Graphics Designing) ═══ */}
+      {showCreateClientModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 w-full max-w-lg rounded-3xl p-6 space-y-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200 text-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">Create / Select Marketing Client Account</h3>
+                <p className="text-xs text-slate-500 font-medium">Choose a client from Client DB or register a new client</p>
+              </div>
+              <button
+                onClick={() => setShowCreateClientModal(false)}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg bg-slate-100 transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleClientSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setClientMode('search')}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    clientMode === 'search'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <Search size={14} /> Search Client DB
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClientMode('new')}
+                  className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                    clientMode === 'new'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <UserPlus size={14} /> Manually Create Client
+                </button>
+              </div>
+
+              {clientMode === 'search' ? (
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Select Client from Client DB *</label>
+                  <SearchableSelect
+                    options={safeClients.filter(c => c && c.id).map(c => ({ id: c.id, value: c.id, label: `${c.name || 'Unnamed'} (${c.companyName || 'Client'})` }))}
+                    value={selectedExistingClientId}
+                    onChange={(val) => setSelectedExistingClientId(val)}
+                    placeholder="Search existing clients in DB..."
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">Client Full Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. John Doe"
+                      value={newClientForm.name}
+                      onChange={(e) => setNewClientForm(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 text-slate-800 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-slate-900 font-medium"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">Company / Brand Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Acme Studio"
+                      value={newClientForm.companyName}
+                      onChange={(e) => setNewClientForm(prev => ({ ...prev, companyName: e.target.value }))}
+                      className="w-full bg-white border border-slate-200 text-slate-800 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-slate-900 font-medium"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">Email Address</label>
+                      <input
+                        type="email"
+                        placeholder="john@example.com"
+                        value={newClientForm.email}
+                        onChange={(e) => setNewClientForm(prev => ({ ...prev, email: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 text-slate-800 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-slate-900 font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 block mb-1">Mobile / Phone</label>
+                      <input
+                        type="tel"
+                        placeholder="+91 9876543210"
+                        value={newClientForm.mobile}
+                        onChange={(e) => setNewClientForm(prev => ({ ...prev, mobile: e.target.value }))}
+                        className="w-full bg-white border border-slate-200 text-slate-800 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-slate-900 font-medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs py-3 rounded-xl transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? 'Processing...' : 'Open Marketing Client Account'}
+              </button>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Add / Edit Modal */}
@@ -1482,14 +1903,30 @@ const Marketing: React.FC<MarketingProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <SearchableSelect
-                    label="Assigned Client"
-                    placeholder="Select Client..."
-                    options={clients.map(c => ({ id: c.id, label: c.name, subLabel: c.companyName }))}
-                    value={projectForm.clientId || ''}
-                    onChange={(val) => setProjectForm({ ...projectForm, clientId: val })}
-                    required
-                  />
+                  {(!editingProject && selectedClient) ? (
+                    <div>
+                      <label className="block text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1.5">Assigned Client</label>
+                      <div className="w-full p-2.5 border border-slate-200 rounded-lg bg-slate-50 text-xs font-bold text-slate-700 flex items-center gap-2.5">
+                        <div className="w-6 h-6 rounded-md bg-slate-900 flex items-center justify-center shrink-0">
+                          <span className="text-white font-black text-xs">{(selectedClient?.name || 'C')[0].toUpperCase()}</span>
+                        </div>
+                        <span>{selectedClient?.name}</span>
+                        {selectedClient?.companyName && (
+                          <span className="text-slate-400 font-normal">({selectedClient.companyName})</span>
+                        )}
+                        <span className="ml-auto text-[8px] font-black text-slate-400 uppercase tracking-wider">Account Context</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <SearchableSelect
+                      label="Assigned Client"
+                      placeholder="Select Client..."
+                      options={clients.map(c => ({ id: c.id, label: c.name, subLabel: c.companyName }))}
+                      value={projectForm.clientId || ''}
+                      onChange={(val) => setProjectForm({ ...projectForm, clientId: val })}
+                      required
+                    />
+                  )}
                 </div>
 
                 <div className="space-y-1">

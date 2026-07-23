@@ -60,9 +60,11 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
   employees = []
 }) => {
   const [activeTab, setActiveTab] = useState<InboundTab>('overview');
-  const [showNewCampaignModal, setShowNewCampaignModal] = useState(false);
+  const [showNewCampaignModal, setShowNewCampaignModal] = useState(false);  // Manual Prospect Entry
   const [showManualEntryModal, setShowManualEntryModal] = useState(false);
-  const [manualEntryForm, setManualEntryForm] = useState({ name: '', company: '', phone: '', email: '', whatsapp: '', serviceId: '', estimatedValue: '', notes: '' });
+  const [manualEntryForm, setManualEntryForm] = useState({ contactName: '', companyName: '', mobile: '', email: '', estimatedValue: '', notes: '' });
+  // Mobile Stage Filter for Kanban
+  const [mobileActiveStage, setMobileActiveStage] = useState<string>('New Prospect');
   const [selectedProspect, setSelectedProspect] = useState<any | null>(null);
   const [catalogServices, setCatalogServices] = useState<CatalogService[]>([]);
   // Drag & Drop (Kanban)
@@ -1846,10 +1848,10 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
         ) : null;
 
         return (
-          <div className="flex p-1.5 bg-slate-100 rounded-2xl w-fit">
+          <div className="flex p-1 bg-slate-100/90 rounded-2xl w-full max-w-full overflow-x-auto no-scrollbar scrollbar-none gap-1 border border-slate-200/60 shadow-xs shrink-0">
             <button
               onClick={() => setActiveTab('overview')}
-              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${activeTab === 'overview'
+              className={`whitespace-nowrap flex-shrink-0 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${activeTab === 'overview'
                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
@@ -1860,7 +1862,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('campaigns')}
-              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${activeTab === 'campaigns'
+              className={`whitespace-nowrap flex-shrink-0 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${activeTab === 'campaigns'
                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
@@ -1871,7 +1873,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('prospects')}
-              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${activeTab === 'prospects'
+              className={`whitespace-nowrap flex-shrink-0 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${activeTab === 'prospects'
                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
@@ -1882,7 +1884,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('nurturing')}
-              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${activeTab === 'nurturing'
+              className={`whitespace-nowrap flex-shrink-0 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${activeTab === 'nurturing'
                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
@@ -1893,7 +1895,7 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('noResponsePool')}
-              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${activeTab === 'noResponsePool'
+              className={`whitespace-nowrap flex-shrink-0 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${activeTab === 'noResponsePool'
                 ? 'bg-white text-indigo-600 shadow-sm border border-slate-200/60'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
@@ -2368,26 +2370,26 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
 
             return (
               <div className="space-y-6">
-                <div className="flex items-center justify-between bg-white rounded-3xl p-6 border border-slate-100 shadow-xl">
+                <div className="flex flex-col md:flex-row md:items-center justify-between bg-white rounded-3xl p-4 md:p-6 border border-slate-100 shadow-xl gap-4">
                   <div>
                     <h2 className="text-xl font-black text-slate-800 tracking-tight mb-1">Active Deals Pipeline</h2>
-                    <p className="text-xs text-slate-500 font-medium">Manage and move outbound prospects through the sales stages.</p>
+                    <p className="text-xs text-slate-500 font-medium">Manage and move inbound prospects through the sales stages.</p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
+                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full md:w-auto">
+                    <div className="relative flex-1 sm:flex-initial w-full sm:w-48">
                       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       <input 
                         type="text" 
                         placeholder="Search deals..." 
                         value={activeDealsSearch}
                         onChange={(e) => setActiveDealsSearch(e.target.value)}
-                        className="pl-8 pr-4 py-2 w-48 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        className="pl-8 pr-4 py-2 w-full border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
                       />
                     </div>
                     <select 
                       value={activeDealsCampaignFilter}
                       onChange={(e) => setActiveDealsCampaignFilter(e.target.value)}
-                      className="px-4 py-2 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                      className="flex-1 sm:flex-initial px-4 py-2 border border-slate-200 rounded-xl bg-slate-50 font-bold text-xs text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                     >
                       <option value="all">All Campaigns</option>
                       {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -2406,24 +2408,49 @@ const SalesInbound: React.FC<SalesInboundProps> = ({
                         })),
                         'active_prospects'
                       )}
-                      className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-100 border border-emerald-200 transition-all">
+                      className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-100 border border-emerald-200 transition-all cursor-pointer">
                       <FileSpreadsheet size={16} />
                       Export
                     </button>
                   </div>
                 </div>
 
+                {/* Mobile Stage Selector Bar */}
+                <div className="md:hidden flex overflow-x-auto no-scrollbar scrollbar-none gap-2 pb-2 shrink-0">
+                  {stages.map(stage => {
+                    const count = activeDealsList.filter(p => p.outboundStage === stage).length;
+                    const isSelected = mobileActiveStage === stage;
+                    return (
+                      <button
+                        key={stage}
+                        onClick={() => setMobileActiveStage(stage)}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-2 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white shadow-md'
+                            : 'bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span>{stage}</span>
+                        <span className={`px-1.5 py-0.2 text-[10px] font-black rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {/* Kanban Board */}
-                <div className="flex gap-4 overflow-x-auto pb-6 -mx-2 px-2 snap-x">
+                <div className="flex flex-col md:flex-row gap-4 overflow-x-auto pb-6 -mx-2 px-2 snap-x">
                   {stages.map(stage => {
                     const isClosedWon = stage === 'Closed Won';
                     const columnProspects = activeDealsList.filter(p => p.outboundStage === stage);
                     const isDragTarget = dragOverStage === stage;
+                    const isMobileVisible = mobileActiveStage === stage;
 
                     return (
                       <div
                         key={stage}
-                        className={`flex-none w-80 rounded-3xl border flex flex-col snap-start h-[calc(100vh-300px)] transition-all duration-200 ${
+                        className={`${isMobileVisible ? 'flex' : 'hidden md:flex'} flex-none w-full md:w-80 rounded-3xl border flex-col snap-start min-h-[400px] md:h-[calc(100vh-300px)] transition-all duration-200 ${
                           isDragTarget
                             ? isClosedWon
                               ? 'bg-emerald-50/80 border-emerald-400 shadow-lg shadow-emerald-500/10'

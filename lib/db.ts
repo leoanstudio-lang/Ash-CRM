@@ -13,7 +13,7 @@ import {
     Timestamp
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { Project, Client, Lead, Employee, Service, CatalogService, Package, PaymentAlert, CompanyProfile, AIConfig, Quotation } from "../types";
+import { Project, Client, Lead, Employee, Service, CatalogService, Package, PaymentAlert, CompanyProfile, AIConfig, Quotation, Invoice } from "../types";
 
 // --- Generic Helpers ---
 
@@ -92,28 +92,15 @@ export const saveHubRBAC = async (rbac: any) => {
 
 // --- Projects ---
 
+export const sanitizeForFirestore = <T>(data: T): T => {
+    if (!data) return data;
+    return JSON.parse(JSON.stringify(data));
+};
+
 export const addProjectToDB = async (project: Omit<Project, 'id'>) => {
     try {
-        // If project has a custom ID (e.g. from our manual ID generation logic), we might want to use setDoc.
-        // However, Firestore auto-ID is better. 
-        // BUT the current app uses `G${Date.now()}` which is useful.
-        // Let's rely on Firestore IDs for new items, but if we really want custom IDs, we use setDoc.
-        // To keep it simple, we'll let Firestore generate ID, OR we pass the ID if it exists.
-
-        // Actually, looking at the code, they generate IDs like "P1", "G123123".
-        // If we want to keep that format, we should use setDoc with that ID.
-        // The passed 'project' might not have 'id' if we use addDoc.
-        // Let's assume the caller provides the full object usually.
-        // Wait, the types says id is string.
-
-        // Strategy: Use addDoc, let Firestore assign ID. Update the UI to use that ID.
-        // OR: Use setDoc with `doc(db, "projects", customId)`.
-
-        // For now, let's use addDoc for simplicity unless specific ID format is strictly required.
-        // Update: User code uses `id: \`G${Date.now()}\``. We should respect that if possible to avoid breaking ID-based logic?
-        // Actually, Firestore IDs are strings too.
-
-        const docRef = await addDoc(collection(db, "projects"), project);
+        const cleanProject = sanitizeForFirestore(project);
+        const docRef = await addDoc(collection(db, "projects"), cleanProject);
         return docRef.id;
     } catch (e) {
         console.error("Error adding project: ", e);
@@ -122,8 +109,9 @@ export const addProjectToDB = async (project: Omit<Project, 'id'>) => {
 
 export const updateProjectInDB = async (id: string, updates: Partial<Project>) => {
     try {
+        const cleanUpdates = sanitizeForFirestore(updates);
         const docRef = doc(db, "projects", id);
-        await updateDoc(docRef, updates);
+        await updateDoc(docRef, cleanUpdates);
     } catch (e) {
         console.error("Error updating project: ", e);
     }
@@ -1054,3 +1042,70 @@ export const logEmployeeLogout = async (employeeId: string) => {
     throw err;
   }
 };
+
+// --- Invoices Database Helpers ---
+
+const cleanFirestoreData = (obj: any): any => {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const clean: any = Array.isArray(obj) ? [] : {};
+  Object.keys(obj).forEach(key => {
+    if (obj[key] !== undefined) {
+      if (typeof obj[key] === 'object' && obj[key] !== null && !(obj[key] instanceof Date)) {
+        clean[key] = cleanFirestoreData(obj[key]);
+      } else {
+        clean[key] = obj[key];
+      }
+    }
+  });
+  return clean;
+};
+
+export const generateProfessionalInvoiceId = async (): Promise<string> => {
+  try {
+    const year = new Date().getFullYear();
+    const q = query(collection(db, "invoices"));
+    const snap = await getDocs(q);
+    const count = snap.size + 1;
+    const padded = String(count).padStart(3, '0');
+    return `INV-${year}-${padded}`;
+  } catch (e) {
+    console.error("Error generating invoice ID:", e);
+    return `INV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+  }
+};
+
+export const addInvoiceToDB = async (invoice: Omit<Invoice, 'id'>): Promise<string> => {
+  try {
+    const dataToSave = cleanFirestoreData({
+      ...invoice,
+      createdAt: invoice.createdAt || new Date().toISOString()
+    });
+    const docRef = await addDoc(collection(db, "invoices"), dataToSave);
+    return docRef.id;
+  } catch (e) {
+    console.error("Error adding invoice to DB:", e);
+    throw e;
+  }
+};
+
+export const updateInvoiceInDB = async (id: string, updates: Partial<Invoice>): Promise<void> => {
+  try {
+    const dataToUpdate = cleanFirestoreData(updates);
+    const docRef = doc(db, "invoices", id);
+    await updateDoc(docRef, dataToUpdate);
+  } catch (e) {
+    console.error("Error updating invoice in DB:", e);
+    throw e;
+  }
+};
+
+export const deleteInvoiceFromDB = async (id: string): Promise<void> => {
+  try {
+    const docRef = doc(db, "invoices", id);
+    await deleteDoc(docRef);
+  } catch (e) {
+    console.error("Error deleting invoice from DB:", e);
+    throw e;
+  }
+};
+

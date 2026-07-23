@@ -13,7 +13,6 @@ import Notifications from './components/Notifications';
 import Settings from './components/Settings';
 import Login from './components/Login';
 import EmployeePanel from './components/EmployeePanel';
-import History from './components/History';
 import Payments from './components/Payments';
 import QuotationsView from './components/Quotations';
 import ContentStudio from './components/ContentStudio';
@@ -21,8 +20,9 @@ import RiskMonitorModal from './components/Strategies/RiskMonitorModal';
 import AccountingLayout from './components/Accounting/AccountingLayout';
 import InternalHub from './components/InternalHub';
 import Attendance from './components/Attendance';
+import Invoices from './components/Invoices';
 import { Bell, LogOut } from 'lucide-react';
-import { subscribeToCollection, getCompanyProfile, saveCompanyProfile } from './lib/db';
+import { subscribeToCollection, getCompanyProfile, saveCompanyProfile, addPaymentAlertToDB } from './lib/db';
 import { auth, signOut } from './lib/firebase';
 import { Quotation, QuotationDemo } from './types';
 
@@ -307,6 +307,44 @@ const App: React.FC = () => {
     const interval = setInterval(checkFollowUps, 60000); // Re-check every minute
     return () => clearInterval(interval);
   }, [activeDeals, inboundActiveDeals, dismissedNotificationIds]);
+
+  // Auto-sync completed projects to payment alerts if balance due > 0
+  useEffect(() => {
+    if (!projects || projects.length === 0) return;
+
+    projects.forEach(async (p) => {
+      if (!p || !p.id) return;
+      const isCompleted = p.status === 'Completed' || p.status === 'Finished';
+      if (!isCompleted) return;
+
+      const totalAmt = Number(p.totalAmount) || 0;
+      const advanceAmt = Number(p.advance || p.receivedAmount) || 0;
+      const balanceDue = totalAmt - advanceAmt;
+
+      if (balanceDue > 0) {
+        // Check if an alert already exists for this exact project ID
+        const alreadyExists = (paymentAlerts || []).some(a => a && a.projectId === p.id);
+
+        if (!alreadyExists) {
+          const clientObj = (clients || []).find(c => c && c.id === p.clientId);
+          const clientNameStr = clientObj?.name || p.clientName || 'Client';
+
+          await addPaymentAlertToDB({
+            projectId: p.id,
+            packageId: undefined,
+            clientId: p.clientId,
+            clientName: clientNameStr,
+            amount: balanceDue,
+            milestoneLabel: `Balance Payment - ${p.serviceName || 'Graphic Service'}`,
+            department: p.department || 'Graphics Designing',
+            status: 'due',
+            type: 'standalone',
+            triggeredAt: new Date().toISOString()
+          });
+        }
+      }
+    });
+  }, [projects, paymentAlerts, clients]);
 
   const handleNotificationClick = (linkData: any) => {
     if (linkData.section) {
@@ -603,9 +641,9 @@ const App: React.FC = () => {
         employees={employees}
       />;
       case 'Client DB': return <ClientDB clients={clients} setClients={setClients} />;
-      case 'History': return <History projects={projects} setProjects={setProjects} employees={employees} packages={packages} />;
       case 'Accounts': return <AccountingLayout />;
-      case 'Payments': return <Payments paymentAlerts={paymentAlerts} packages={packages} clients={clients} />;
+      case 'Payments': return <Payments paymentAlerts={paymentAlerts} packages={packages} clients={clients} projects={projects} />;
+      case 'Invoices': return <Invoices clients={clients} services={services} paymentAlerts={paymentAlerts} packages={packages} projects={projects} />;
       case 'Content Studio': return <ContentStudio months={contentMonths} cards={contentCards} assets={contentAssets} />;
       case 'Internal Hub': return <InternalHub currentUser={currentUser} employees={employees} />;
       case 'Attendance': return <Attendance employees={employees} currentUser={currentUser} />;
@@ -675,28 +713,30 @@ const App: React.FC = () => {
   };
 
   const counts = {
-    'Execution Center': executionTasks.filter(t => t.status === 'Pending' || t.status === 'In Progress').length,
-    Payments: paymentAlerts.filter(a => a.status === 'due' || a.status === 'pending' || a.status === 'waiting').length,
-    Quotations: quotations.filter(q => ['Draft', 'Sent', 'Manager Approved'].includes(q.status)).length,
-    'Sales CRM': leads.filter(l => l.status === 'Lead Today').length,
+    'Execution Center': executionTasks.filter(t => t && (t.status === 'Pending' || t.status === 'In Progress')).length,
+    Payments: paymentAlerts.filter(a => a && (a.status === 'due' || a.status === 'pending' || a.status === 'waiting')).length,
+    Quotations: quotations.filter(q => q && ['Draft', 'Sent', 'Manager Approved'].includes(q.status)).length,
+    'Sales CRM': leads.filter(l => l && l.status === 'Lead Today').length,
     'Graphics Designing': projects.filter(p =>
-      p.type === 'Graphic' &&
-      ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status) &&
-      p.deadline && p.deadline.split('T')[0] <= todayStr
+      p && (p.department === 'Graphics Designing' || p.type === 'Graphic') &&
+      p.status !== 'Completed' && p.status !== 'Finished' && p.status !== 'Closed'
     ).length,
     'Marketing': projects.filter(p =>
-      p.type === 'Marketing' &&
-      ['Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Working'].includes(p.status)
+      p && p.type === 'Marketing' &&
+      p.status !== 'Completed' && p.status !== 'Closed'
     ).length,
     'Client DB': clients.length,
-    Notification: notifications.length + employeeNotifications.filter(n => n.status === 'pending_review').length,
-    Development: projects.filter(p => p.type !== 'Graphic' && ['Allocated', 'Pending', 'Waiting', 'In Progress', 'Client Feedback', 'Testing', 'Working'].includes(p.status)).length,
+    Notification: notifications.length + employeeNotifications.filter(n => n && n.status === 'pending_review').length,
+    Development: projects.filter(p =>
+      p && (p.department === 'Development' || (p.type !== 'Graphic' && p.type !== 'Marketing')) &&
+      p.status !== 'Completed' && p.status !== 'Finished' && p.status !== 'Closed'
+    ).length,
     Strategies: calculateStrategyBadge(),
     'Content Studio': calculateContentBadge(),
-    'Internal Hub': hubIssues.filter(i => i.status === 'Open').length +
-                  hubResourceRequests.filter(r => r.status === 'Pending').length +
-                  hubImprovements.filter(imp => imp.status === 'Submitted').length +
-                  hubSuggestions.filter(s => s.status === 'New').length
+    'Internal Hub': hubIssues.filter(i => i && i.status === 'Open').length +
+                  hubResourceRequests.filter(r => r && r.status === 'Pending').length +
+                  hubImprovements.filter(imp => imp && imp.status === 'Submitted').length +
+                  hubSuggestions.filter(s => s && s.status === 'New').length
   };
 
   return (

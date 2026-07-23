@@ -860,13 +860,11 @@ const Quotations: React.FC<QuotationsProps> = ({ clients, services, employees })
                 doc.text(co.tagline, 14, footerBandY + 14);
             }
 
-            // Center: Page number (only if multi-page)
-            if (pageCount > 1) {
-                doc.setFontSize(8);
-                doc.setFont("helvetica", "bold");
-                doc.setTextColor(...royalPurple2);
-                doc.text(`${i}/${pageCount}`, pageWidth / 2, footerBandY + 10, { align: 'center' });
-            }
+            // Center: Page number
+            doc.setFontSize(8);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...royalPurple2);
+            doc.text(`${i}/${pageCount}`, pageWidth / 2, footerBandY + 10, { align: 'center' });
             // Right: Dynamic Social Icons from /public/ folder
             // Map label → fallback if needed, but primarily dynamic
             const fallbackIconMap: Record<string, string> = {
